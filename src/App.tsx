@@ -3324,6 +3324,160 @@ export default function App() {
     };
   }, []);
 
+  // --- FIRESTORE REAL-TIME SYNCHRONIZATION ENGINE ---
+  useEffect(() => {
+    const unsubDailyRecords = onSnapshot(collection(db, 'daily_records'), (snapshot) => {
+      const dbRecords: AllRecords = {};
+      snapshot.forEach((doc) => {
+        const data = doc.data();
+        if (data && data.date && data.outletId && data.records) {
+          if (!dbRecords[data.date]) {
+            dbRecords[data.date] = {};
+          }
+          dbRecords[data.date][data.outletId] = data.records;
+        }
+      });
+      if (Object.keys(dbRecords).length > 0) {
+        setRecords(prev => {
+          // Merge local and incoming cloud records smoothly
+          return {
+            ...prev,
+            ...dbRecords
+          };
+        });
+      }
+    }, (error) => {
+      console.error("Error listening to daily_records:", error);
+    });
+
+    const unsubRequirements = onSnapshot(collection(db, 'requirements'), (snapshot) => {
+      const list: Requirement[] = [];
+      snapshot.forEach((doc) => {
+        const data = doc.data();
+        if (data && data.outletId && data.itemId) {
+          list.push({
+            outletId: data.outletId,
+            itemId: data.itemId,
+            quantity: Number(data.quantity || 0)
+          });
+        }
+      });
+      setRequirements(list);
+    }, (error) => {
+      console.error("Error listening to requirements:", error);
+    });
+
+    const unsubTransfers = onSnapshot(collection(db, 'transfers'), (snapshot) => {
+      const list: Transfer[] = [];
+      snapshot.forEach((doc) => {
+        const data = doc.data() as Transfer;
+        if (data && data.toOutletId && data.itemId) {
+          list.push(data);
+        }
+      });
+      setPendingTransfers(list);
+    }, (error) => {
+      console.error("Error listening to transfers:", error);
+    });
+
+    const unsubPermissions = onSnapshot(collection(db, 'outlet_permissions'), (snapshot) => {
+      const perms: { [outletId: string]: OutletPermissions } = {};
+      snapshot.forEach((doc) => {
+        const data = doc.data() as OutletPermissions;
+        if (data) {
+          perms[doc.id] = data;
+        }
+      });
+      if (Object.keys(perms).length > 0) {
+        setPermissions(prev => ({
+          ...prev,
+          ...perms
+        }));
+      }
+    }, (error) => {
+      console.error("Error listening to outlet_permissions:", error);
+    });
+
+    const unsubIngredients = onSnapshot(collection(db, 'ingredients'), (snapshot) => {
+      const list: Ingredient[] = [];
+      snapshot.forEach((doc) => {
+        const data = doc.data();
+        if (data && data.name) {
+          list.push({
+            id: doc.id,
+            name: data.name,
+            unit: data.unit,
+            currentStock: Number(data.currentStock || 0),
+            lowStockThreshold: Number(data.lowStockThreshold || 0)
+          });
+        }
+      });
+      if (list.length > 0) setIngredients(list);
+    }, (error) => {
+      console.error("Error listening to ingredients:", error);
+    });
+
+    const unsubRecipes = onSnapshot(collection(db, 'recipes'), (snapshot) => {
+      const list: Recipe[] = [];
+      snapshot.forEach((doc) => {
+        const data = doc.data();
+        if (data && data.itemId) {
+          list.push({
+            id: doc.id,
+            itemId: data.itemId,
+            ingredients: data.ingredients || []
+          });
+        }
+      });
+      if (list.length > 0) setRecipes(list);
+    }, (error) => {
+      console.error("Error listening to recipes:", error);
+    });
+
+    const unsubItems = onSnapshot(collection(db, 'items'), (snapshot) => {
+      if (snapshot.empty) {
+        // Automatically seed INITIAL_ITEMS if the Firestore collection starts empty
+        INITIAL_ITEMS.forEach(async (item) => {
+          try {
+            await setDoc(doc(db, 'items', item.id), item);
+          } catch (e) {
+            console.error("Failed to seed items in Firestore:", e);
+          }
+        });
+        setItems(INITIAL_ITEMS);
+      } else {
+        const list: Item[] = [];
+        snapshot.forEach((doc) => {
+          const data = doc.data();
+          if (data && data.id && data.name) {
+            list.push({
+              id: data.id,
+              name: data.name,
+              category: data.category,
+              barcode: data.barcode
+            });
+          }
+        });
+        setItems(list);
+      }
+    }, (error) => {
+      console.error("Error listening to items:", error);
+    });
+
+    // Disable general first-time connection progress blocker once Firestore real-time channels are listening
+    setLoading(false);
+
+    return () => {
+      unsubDailyRecords();
+      unsubRequirements();
+      unsubTransfers();
+      unsubPermissions();
+      unsubIngredients();
+      unsubRecipes();
+      unsubItems();
+    };
+  }, []);
+
   // Debounced LocalStorage Backup
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -4020,11 +4174,13 @@ export default function App() {
       setPendingTransfers(prev => [...prev, newTransfer]);
 
       // Deduct from requirements state
+      let updatedReqQty = -1;
       setRequirements(prev => {
         const index = prev.findIndex(r => r.outletId === outletId && r.itemId === itemId);
         if (index > -1) {
           const updated = [...prev];
           const newQty = Math.max(0, updated[index].quantity - qty);
+          updatedReqQty = newQty;
           if (newQty === 0) {
             updated.splice(index, 1);
           } else {
@@ -4035,6 +4191,26 @@ export default function App() {
         return prev;
       });
 
+      // Synchronize Transfer and Requirement changes directly to Firestore
+      try {
+        await setDoc(doc(db, 'transfers', generatedId), newTransfer);
+        if (updatedReqQty !== -1) {
+          const reqId = `${outletId}_${itemId}`;
+          if (updatedReqQty === 0) {
+            await deleteDoc(doc(db, 'requirements', reqId));
+          } else {
+            await setDoc(doc(db, 'requirements', reqId), {
+              outletId,
+              itemId,
+              quantity: updatedReqQty,
+              updatedAt: serverTimestamp()
+            });
+          }
+        }
+      } catch (err) {
+        console.error("Firestore sync error in distribution:", err);
+      }
+
       addNotification(`TRANSFER INITIATED: ${qty} units of ${item.name} sent to ${OUTLETS.find(o => o.id === outletId)?.name}.`, 'success');
     } catch (e) {
       console.error("Error creating transfer:", e);
@@ -4043,6 +4219,7 @@ export default function App() {
 
   const handleAcceptTransfer = async (transfer: Transfer) => {
     try {
+      let updatedOutlet: any = null;
       // 1. Update DailyRecord state
       setRecords(prev => {
         const dayRecords = prev[transfer.date] || {};
@@ -4063,13 +4240,25 @@ export default function App() {
           newData.closing = calculateClosing(newData);
         }
 
-        const updatedOutlet = { ...outletRecords, [transfer.itemId]: newData };
+        updatedOutlet = { ...outletRecords, [transfer.itemId]: newData };
 
         return {
           ...prev,
           [transfer.date]: { ...dayRecords, [transfer.toOutletId]: updatedOutlet }
         };
       });
+
+      // Synchronize accepted record and transfer status with Firestore
+      if (updatedOutlet) {
+        const recordId = `${transfer.date}_${transfer.toOutletId}`;
+        await setDoc(doc(db, 'daily_records', recordId), {
+          date: transfer.date,
+          outletId: transfer.toOutletId,
+          records: updatedOutlet
+        }, { merge: true });
+      }
+
+      await setDoc(doc(db, 'transfers', transfer.id), { status: 'accepted' }, { merge: true });
 
       // 2. Update transfer status state locally
       setPendingTransfers(prev => 
@@ -4084,10 +4273,13 @@ export default function App() {
 
   const handleRejectTransfer = async (transfer: Transfer) => {
     try {
-      // Update transfer status state locally
+      // Update transfer status state locally and in Firestore
       setPendingTransfers(prev => 
         prev.map(t => t.id === transfer.id ? { ...t, status: 'rejected' } : t)
       );
+
+      await setDoc(doc(db, 'transfers', transfer.id), { status: 'rejected' }, { merge: true });
+
       addNotification(`TRANSFER REJECTED`, 'info');
     } catch (e) {
       console.error("Reject error:", e);
@@ -4096,6 +4288,7 @@ export default function App() {
 
   const updatePermission = async (outletId: string, key: keyof OutletPermissions, value: boolean) => {
     try {
+      let updatedPerm: any = null;
       setPermissions(prev => {
         const outletPerms = prev[outletId] || {
           canEditOpening: true,
@@ -4103,14 +4296,19 @@ export default function App() {
           canEditReturned: true,
           canEditTransfer: true
         };
+        const nextPerms = {
+          ...outletPerms,
+          [key]: value
+        };
+        updatedPerm = nextPerms;
         return {
           ...prev,
-          [outletId]: {
-            ...outletPerms,
-            [key]: value
-          }
+          [outletId]: nextPerms
         };
       });
+      if (updatedPerm) {
+        await setDoc(doc(db, 'outlet_permissions', outletId), updatedPerm, { merge: true });
+      }
       addNotification(`PERMISSIONS UPDATED`, 'success');
     } catch (error) {
       console.error("Update permissions error", error);
@@ -4118,8 +4316,27 @@ export default function App() {
   };
 
   const saveDailyData = async () => {
-    setIsDirty(false);
-    addNotification('SUCCESS: SYSTEM OFFLINE RECORD SYNCED', 'success');
+    setLoading(true);
+    try {
+      const recordId = `${currentDate}_${selectedOutletId}`;
+      const docRef = doc(db, 'daily_records', recordId);
+      const targetRecords = records[currentDate]?.[selectedOutletId] || {};
+      
+      await setDoc(docRef, {
+        date: currentDate,
+        outletId: selectedOutletId,
+        records: targetRecords
+      }, { merge: true });
+
+      setIsDirty(false);
+      addNotification('SUCCESS: RECORDS INSTANTLY SYNCED TO SECURE CLOUD', 'success');
+    } catch (e) {
+      console.error("Failed to save daily data to Firestore:", e);
+      addNotification('CLOUD SYNC FAILURE. RECORD KEPT LOCALLY.', 'error');
+      handleFirestoreError(e, OperationType.WRITE, `daily_records/${currentDate}_${selectedOutletId}`);
+    } finally {
+      setLoading(false);
+    }
   };
 
   useEffect(() => {
