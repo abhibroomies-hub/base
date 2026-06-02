@@ -1,0 +1,217 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile with role and associated outlet",
+      "type": "object",
+      "properties": {
+        "role": {
+          "type": "string",
+          "enum": ["admin", "outlet"],
+          "description": "Role of the user"
+        },
+        "outletId": {
+          "type": "string",
+          "description": "The ID of the outlet this user belongs to (if outlet role)"
+        },
+        "email": {
+          "type": "string",
+          "description": "User email"
+        }
+      },
+      "required": ["role", "email"]
+    },
+    "OutletPermission": {
+      "title": "Outlet Permission",
+      "description": "Permissions for an outlet controlled by the admin",
+      "type": "object",
+      "properties": {
+        "canEditOpening": { "type": "boolean" },
+        "canEditReceived": { "type": "boolean" },
+        "canEditReturned": { "type": "boolean" },
+        "canEditTransfer": { "type": "boolean" }
+      },
+      "required": ["canEditOpening", "canEditReceived", "canEditReturned", "canEditTransfer"]
+    },
+    "DailyRecord": {
+      "title": "Daily Record",
+      "description": "Inventory data for a specific outlet and date",
+      "type": "object",
+      "properties": {
+        "date": { "type": "string" },
+        "outletId": { "type": "string" },
+        "records": {
+          "type": "object",
+          "description": "Map of item IDs to DailyData objects"
+        },
+        "batches": {
+          "type": "object",
+          "description": "Map of batch IDs to ProductionBatch objects"
+        }
+      },
+      "required": ["date", "records"]
+    },
+    "Item": {
+      "title": "Item",
+      "description": "Catalog item",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "category": { "type": "string" }
+      },
+      "required": ["id", "name", "category"]
+    },
+    "ProductionBatch": {
+      "title": "Production Batch",
+      "description": "A batch of items arriving from production with expiry tracking",
+      "type": "object",
+      "properties": {
+        "itemId": { "type": "string" },
+        "itemName": { "type": "string" },
+        "category": { "type": "string" },
+        "quantity": { "type": "number" },
+        "soldQuantity": { "type": "number" },
+        "producedAt": { "type": "string", "format": "date-time" },
+        "expiryAt": { "type": "string", "format": "date-time" },
+        "outletId": { "type": "string" },
+        "status": { "type": "string", "enum": ["fresh", "active", "finished"] }
+      },
+      "required": ["itemId", "itemName", "quantity", "producedAt", "expiryAt", "outletId"]
+    },
+    "ColdRoomRecord": {
+      "title": "Cold Room Record",
+      "description": "Stock placed in cold room for next day",
+      "type": "object",
+      "properties": {
+        "date": { "type": "string" },
+        "itemId": { "type": "string" },
+        "itemName": { "type": "string" },
+        "quantity": { "type": "number" }
+      },
+      "required": ["date", "itemId", "quantity"]
+    },
+    "InventoryRecord": {
+      "title": "Inventory Record",
+      "description": "Granular inventory record for an item at an outlet on a specific date",
+      "type": "object",
+      "properties": {
+        "date": { "type": "string" },
+        "outletId": { "type": "string" },
+        "itemId": { "type": "string" },
+        "received": { "type": "number" },
+        "sold": { "type": "number" },
+        "returned": { "type": "number" },
+        "transf_out": { "type": "number" },
+        "testing": { "type": "number" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["date", "outletId", "itemId", "received"]
+    },
+    "Ingredient": {
+      "title": "Ingredient",
+      "description": "Raw material ingredient used in recipes",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "unit": { "type": "string" },
+        "currentStock": { "type": "number" },
+        "lowStockThreshold": { "type": "number" }
+      },
+      "required": ["name", "unit", "currentStock"]
+    },
+    "Recipe": {
+      "title": "Recipe",
+      "description": "Recipe mapping an item to its required ingredients",
+      "type": "object",
+      "properties": {
+        "itemId": { "type": "string" },
+        "ingredients": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "ingredientId": { "type": "string" },
+              "quantity": { "type": "number" }
+            }
+          }
+        }
+      },
+      "required": ["itemId", "ingredients"]
+    },
+    "Requirement": {
+      "title": "Requirement",
+      "description": "Stock requirement for an item at an outlet",
+      "type": "object",
+      "properties": {
+        "outletId": { "type": "string" },
+        "itemId": { "type": "string" },
+        "quantity": { "type": "number" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["outletId", "itemId", "quantity"]
+    },
+    "Transfer": {
+      "title": "Transfer",
+      "description": "Pending item transfer from admin/production to an outlet",
+      "type": "object",
+      "properties": {
+        "fromOutletId": { "type": "string" },
+        "toOutletId": { "type": "string" },
+        "itemId": { "type": "string" },
+        "itemName": { "type": "string" },
+        "quantity": { "type": "number" },
+        "status": { "type": "string", "enum": ["pending", "accepted", "rejected"] },
+        "date": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["toOutletId", "itemId", "quantity", "status", "date"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "Internal record of users"
+    },
+    "/outlet_permissions/{outletId}": {
+      "schema": "OutletPermission",
+      "description": "Dynamic permissions for each outlet"
+    },
+    "/daily_records/{recordId}": {
+      "schema": "DailyRecord",
+      "description": "Daily inventory records (recordId = date_outletId)"
+    },
+    "/inventory_records/{recordId}": {
+      "schema": "InventoryRecord",
+      "description": "Granular inventory records (recordId = date_outletId_itemId)"
+    },
+    "/items/{itemId}": {
+      "schema": "Item",
+      "description": "Master catalog of items"
+    },
+    "/production_batches/{batchId}": {
+      "schema": "ProductionBatch",
+      "description": "FIFO batches for expiry tracking"
+    },
+    "/cold_room_records/{recordId}": {
+      "schema": "ColdRoomRecord",
+      "description": "Cold room stock monitoring (recordId = date_itemId)"
+    },
+    "/ingredients/{ingredientId}": {
+      "schema": "Ingredient",
+      "description": "Raw material inventory"
+    },
+    "/recipes/{recipeId}": {
+      "schema": "Recipe",
+      "description": "Item formulations"
+    },
+    "/requirements/{reqId}": {
+      "schema": "Requirement",
+      "description": "Outlet stock requirements (reqId = outletId_itemId)"
+    },
+    "/transfers/{transferId}": {
+      "schema": "Transfer",
+      "description": "Pending stock shipments to outlets"
+    }
+  }
+}

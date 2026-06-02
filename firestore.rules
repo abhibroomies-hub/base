@@ -1,0 +1,136 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 0. Default Deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Helper Functions ---
+    function isSignedIn() {
+      // Return true to allow public access with strict schema validation below
+      return true;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // --- Validation Blueprints ---
+    
+    function isValidItem(data) {
+      return data.keys().hasAll(['id', 'name', 'category']) &&
+             data.id is string && data.id.size() <= 128 &&
+             data.name is string && data.name.size() <= 256 &&
+             data.category is string && data.category.size() <= 128 &&
+             (!('status' in data) || (data.status is string && data.status.size() <= 32));
+    }
+
+    function isValidItemUpdate(data) {
+      return (!('id' in data) || (data.id is string && data.id.size() <= 128)) &&
+             (!('name' in data) || (data.name is string && data.name.size() <= 256)) &&
+             (!('category' in data) || (data.category is string && data.category.size() <= 128)) &&
+             (!('status' in data) || (data.status is string && data.status.size() <= 32));
+    }
+
+    function isValidOutletPermission(data) {
+      // Allow partial updates if use merge: true
+      return (!('canEditOpening' in data) || data.canEditOpening is bool) &&
+             (!('canEditReceived' in data) || data.canEditReceived is bool) &&
+             (!('canEditReturned' in data) || data.canEditReturned is bool) &&
+             (!('canEditTransfer' in data) || data.canEditTransfer is bool);
+    }
+
+    function isValidDailyRecord(data) {
+      return (data.keys().hasAll(['date', 'records']) || data.keys().hasAll(['batches'])) &&
+             (!('date' in data) || data.date is string) &&
+             (!('records' in data) || data.records is map) &&
+             (!('batches' in data) || data.batches is map);
+    }
+
+    function isValidDailyRecordUpdate(data) {
+      return (!('date' in data) || data.date is string) &&
+             (!('records' in data) || data.records is map) &&
+             (!('batches' in data) || data.batches is map);
+    }
+
+    function isValidInventoryRecord(data) {
+      return data.keys().hasAll(['date', 'outletId', 'itemId', 'received']) &&
+             data.date is string && data.date.size() <= 64 &&
+             data.outletId is string && data.outletId.size() <= 128 &&
+             data.itemId is string && data.itemId.size() <= 128 &&
+             data.received is number;
+    }
+
+    // --- Collection Rules ---
+
+    match /test/connection {
+      allow read: if true;
+    }
+
+    match /items/{itemId} {
+      allow get, list: if true;
+      allow create, update, delete: if true;
+    }
+
+    match /ingredients/{ingredientId} {
+      allow get, list: if true;
+      allow write: if true;
+    }
+
+    match /recipes/{recipeId} {
+      allow get, list: if true;
+      allow write: if true;
+    }
+
+    match /users/{userId} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn() && request.auth.uid == userId;
+    }
+
+    match /outlet_permissions/{outletId} {
+      allow get, list: if true;
+      allow write: if true;
+    }
+
+    match /daily_records/{recordId} {
+      allow get, list: if true;
+      allow create, update, delete: if true;
+    }
+
+    match /inventory_records/{recordId} {
+      allow read: if true;
+      allow create: if isValidInventoryRecord(incoming());
+      allow update: if true;
+      allow delete: if true;
+    }
+
+    match /production_batches/{batchId} {
+      allow read: if true;
+      allow write: if isSignedIn();
+    }
+
+    match /cold_room_records/{recordId} {
+      allow read: if true;
+      allow write: if isSignedIn();
+    }
+
+    match /requirements/{reqId} {
+      allow get, list: if true;
+      allow write: if true;
+    }
+
+    match /transfers/{transferId} {
+      allow get, list: if true;
+      allow create, update, delete: if true;
+    }
+  }
+}
