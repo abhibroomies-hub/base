@@ -166,6 +166,19 @@
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["toOutletId", "itemId", "quantity", "status", "date"]
+    },
+    "GlobalWastageRecord": {
+      "title": "Global Wastage Record",
+      "description": "Record of stock wasted globally or returned to production",
+      "type": "object",
+      "properties": {
+        "date": { "type": "string" },
+        "itemId": { "type": "string" },
+        "quantity": { "type": "number" },
+        "itemName": { "type": "string" },
+        "reason": { "type": "string" }
+      },
+      "required": ["date", "itemId", "quantity", "itemName"]
     }
   },
   "firestore": {
@@ -180,6 +193,10 @@
     "/daily_records/{recordId}": {
       "schema": "DailyRecord",
       "description": "Daily inventory records (recordId = date_outletId)"
+    },
+    "/daily_records_v2/{recordId}": {
+      "schema": "DailyRecord",
+      "description": "Active Daily inventory records version 2"
     },
     "/inventory_records/{recordId}": {
       "schema": "InventoryRecord",
@@ -197,6 +214,10 @@
       "schema": "ColdRoomRecord",
       "description": "Cold room stock monitoring (recordId = date_itemId)"
     },
+    "/cold_room_records_v2/{recordId}": {
+      "schema": "ColdRoomRecord",
+      "description": "Active Cold room stock monitoring version 2"
+    },
     "/ingredients/{ingredientId}": {
       "schema": "Ingredient",
       "description": "Raw material inventory"
@@ -209,9 +230,21 @@
       "schema": "Requirement",
       "description": "Outlet stock requirements (reqId = outletId_itemId)"
     },
+    "/requirements_v2/{reqId}": {
+      "schema": "Requirement",
+      "description": "Active Outlet stock requirements version 2"
+    },
     "/transfers/{transferId}": {
       "schema": "Transfer",
       "description": "Pending stock shipments to outlets"
+    },
+    "/transfers_v2/{transferId}": {
+      "schema": "Transfer",
+      "description": "Active Pending stock shipments version 2"
+    },
+    "/global_wastage_v2/{wastageId}": {
+      "schema": "GlobalWastageRecord",
+      "description": "Global wastage and return ledger version 2"
     }
   }
 }

@@ -23,6 +23,18 @@ const app = initializeApp(firebaseConfig);
 export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
 export const auth = getAuth(app);
 
+// Collection Names
+export const DAILY_RECORDS_COL = 'daily_records_v2';
+export const REQUIREMENTS_COL = 'requirements_v2';
+export const TRANSFERS_COL = 'transfers_v2';
+export const COLD_ROOM_COL = 'cold_room_records_v2';
+export const GLOBAL_WASTAGE_COL = 'global_wastage_v2';
+
+export const DAILY_RECORDS_OLD_COL = 'daily_records';
+export const REQUIREMENTS_OLD_COL = 'requirements';
+export const TRANSFERS_OLD_COL = 'transfers';
+export const COLD_ROOM_OLD_COL = 'cold_room_records';
+
 // Keep the standard exports compatible with src/App.tsx
 export {
   collection,

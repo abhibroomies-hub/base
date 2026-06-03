@@ -18,8 +18,8 @@ import {
   Sparkles,
   Info
 } from 'lucide-react';
-import { doc, setDoc, getDoc } from 'firebase/firestore';
-import { auth, db } from '../lib/firebase';
+import { doc, setDoc, getDoc, deleteDoc, collection, query, where, getDocs } from 'firebase/firestore';
+import { auth, db, DAILY_RECORDS_COL, REQUIREMENTS_COL, TRANSFERS_COL, COLD_ROOM_COL } from '../lib/firebase';
 
 // Mapped List of 32 items with their exact S.No, item ID matching INITIAL_ITEMS, and Minimum stocks
 export interface MasterLedgerItem {
@@ -87,13 +87,71 @@ export const LedgerSheetComponent = React.memo(({
   getPreviousClosing,
   calculateSold,
   calculateClosing,
-  setIsSidebarOpen
+  setIsSidebarOpen,
+  setPendingTransfers
 }: any) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [activeTab, setActiveTab] = useState<'sheet' | 'fifo' | 'planner'>('sheet');
   const [selectedOutletFilter, setSelectedOutletFilter] = useState<string>('all');
   const [isProcessingRollover, setIsProcessingRollover] = useState(false);
   const [rolloverSuccess, setRolloverSuccess] = useState<string | null>(null);
+  const [showClearModal, setShowClearModal] = useState(false);
+  const [isClearing, setIsClearing] = useState(false);
+  const [clearSuccessMsg, setClearSuccessMsg] = useState('');
+
+  const handleClearTodayRecords = useCallback(async () => {
+    setIsClearing(true);
+    try {
+      // 1. Delete outlet documents in Firestore
+      for (const outlet of OUTLETS) {
+        const recordId = `${currentDate}_${outlet.id}`;
+        const docRef = doc(db, DAILY_RECORDS_COL, recordId);
+        await deleteDoc(docRef);
+      }
+
+      // 2. Delete kitchen batches document in Firestore
+      const kitchenDocRef = doc(db, DAILY_RECORDS_COL, currentDate);
+      await deleteDoc(kitchenDocRef);
+
+      // 3. Delete cold room records for this date
+      for (const item of MASTER_LEDGER_ITEMS) {
+        const coldRoomDocId = `${currentDate}_${item.id}`;
+        const coldRoomDocRef = doc(db, COLD_ROOM_COL, coldRoomDocId);
+        await deleteDoc(coldRoomDocRef);
+      }
+
+      // 3.5 Delete matching transfers in Firestore & clear from local state
+      try {
+        const transfersRef = collection(db, TRANSFERS_COL);
+        const q = query(transfersRef, where('date', '==', currentDate));
+        const transfersSnapshot = await getDocs(q);
+        for (const tDoc of transfersSnapshot.docs) {
+          await deleteDoc(tDoc.ref);
+        }
+        if (setPendingTransfers) {
+          setPendingTransfers((prev: any[]) => prev.filter(t => t.date !== currentDate));
+        }
+      } catch (errTrans) {
+        console.error("Failed to delete matching transfers during clear:", errTrans);
+      }
+
+      // 4. Update local state
+      setRecords((prev: any) => {
+        const copy = { ...prev };
+        delete copy[currentDate];
+        return copy;
+      });
+
+      setClearSuccessMsg(`SUCCESSFULLY WIPED & RESTARTED FRESH FOR ${currentDate === '2026-06-03' ? '3 JUNE' : currentDate}! ALL QUANTITIES ARE EMPTY!`);
+      setTimeout(() => setClearSuccessMsg(''), 5000);
+      setShowClearModal(false);
+    } catch (err: any) {
+      console.error("Failed to clear records:", err);
+      alert(`Error clearing records: ${err.message}`);
+    } finally {
+      setIsClearing(false);
+    }
+  }, [currentDate, setRecords, setPendingTransfers]);
 
   // Helper: Generates list of past 6 dates in YYYY-MM-DD format based on active currentDate
   const datesRange = useMemo(() => {
@@ -270,7 +328,7 @@ export const LedgerSheetComponent = React.memo(({
         // 1. DEDUCT from sender outlet on currentDate
         // (Increment returned counter)
         const sourceRecordKey = `${currentDate}_${outletId}`;
-        const sourceDocRef = doc(db, 'daily_records', sourceRecordKey);
+        const sourceDocRef = doc(db, DAILY_RECORDS_COL, sourceRecordKey);
         
         let sourceDataMap: any = { records: {} };
         const sourceSnap = await getDoc(sourceDocRef);
@@ -298,7 +356,7 @@ export const LedgerSheetComponent = React.memo(({
         // 2. ADD to target outlet (Sec 31) on currentDate
         // (Increment transf_in counter and log sources)
         const targetRecordKey = `${currentDate}_${targetOutletId}`;
-        const targetDocRef = doc(db, 'daily_records', targetRecordKey);
+        const targetDocRef = doc(db, DAILY_RECORDS_COL, targetRecordKey);
 
         let targetDataMap: any = { records: {} };
         const targetSnap = await getDoc(targetDocRef);
@@ -382,18 +440,76 @@ export const LedgerSheetComponent = React.memo(({
           </p>
         </div>
 
-        {/* Date Navigator */}
-        <div className="flex items-center gap-3 bg-[#FAF8F5] p-2 border border-stone-200 rounded-lg">
-          <Calendar size={15} className="text-[#4F2C1D]" />
-          <span className="text-xs font-bold text-stone-600 uppercase">Ledger Base Date:</span>
-          <input 
-            type="date" 
-            value={currentDate} 
-            onChange={(e) => setCurrentDate(e.target.value)}
-            className="text-xs bg-white text-[#4F2C1D] border border-stone-300 font-bold px-2 py-1 rounded focus:outline-none"
-          />
+        <div className="flex flex-wrap items-center gap-4">
+          {/* Date Navigator */}
+          <div className="flex items-center gap-3 bg-[#FAF8F5] p-2 border border-stone-200 rounded-lg">
+            <Calendar size={15} className="text-[#4F2C1D]" />
+            <span className="text-xs font-bold text-stone-600 uppercase">Ledger Base Date:</span>
+            <input 
+              type="date" 
+              value={currentDate} 
+              onChange={(e) => setCurrentDate(e.target.value)}
+              className="text-xs bg-white text-[#4F2C1D] border border-stone-300 font-bold px-2 py-1 rounded focus:outline-none"
+            />
+          </div>
+
+          {/* Start Fresh Clear Button */}
+          <button
+            onClick={() => setShowClearModal(true)}
+            className="h-10 px-4 bg-red-700 hover:bg-red-800 text-white text-[10px] font-black uppercase tracking-wider flex items-center gap-2 transition-all shadow-sm rounded-lg active:scale-95"
+            title="Clear all quantities for currently selected date"
+          >
+            <RotateCcw size={14} className={isClearing ? "animate-spin" : ""} />
+            {currentDate === '2026-06-03' ? "Restart Fresh (Clear 3 June)" : `Clear All (${currentDate})`}
+          </button>
         </div>
       </div>
+
+      {clearSuccessMsg && (
+        <div className="mx-6 mt-4 p-4 bg-green-600 text-white text-[11px] font-black uppercase tracking-widest text-center shadow-lg border border-green-700 rounded-xl">
+          ✨ {clearSuccessMsg}
+        </div>
+      )}
+
+      {/* Confirmation Modal */}
+      {showClearModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-stone-900/60 backdrop-blur-sm" onClick={() => setShowClearModal(false)} />
+          <div className="relative bg-white border-4 border-stone-950 p-6 md:p-8 max-w-md w-full shadow-[12px_12px_0_0_rgba(0,0,0,1)]">
+            <div className="flex items-start gap-3">
+              <span className="p-2 bg-red-100 text-red-800 rounded-lg">
+                <AlertTriangle size={24} />
+              </span>
+              <div>
+                <h3 className="text-lg font-black text-stone-900 uppercase">PERMANENTLY RESET RECORDS</h3>
+                <p className="text-xs text-stone-500 mt-2 leading-relaxed">
+                  Are you sure you want to delete all daily records, base kitchen output batches, and cold room logs for <strong className="text-red-700">{currentDate === '2026-06-03' ? 'June 3rd (Today)' : currentDate}</strong>?
+                </p>
+                <p className="text-[10px] bg-red-50 text-red-800 p-2 mt-3 font-semibold uppercase leading-normal border border-red-100">
+                  ⚠️ This will set all quantities back to blank/empty so you can enter brand new, clean data. Previous historic days will remain fully stored and safe!
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-8 flex gap-3">
+              <button
+                onClick={() => setShowClearModal(false)}
+                disabled={isClearing}
+                className="flex-1 py-3 bg-stone-100 hover:bg-stone-200 text-stone-700 text-[10px] font-black uppercase tracking-widest border border-stone-300 active:scale-95 transition-all"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleClearTodayRecords}
+                disabled={isClearing}
+                className="flex-1 py-3 bg-red-700 hover:bg-red-800 text-white text-[10px] font-black uppercase tracking-widest shadow-md active:scale-95 transition-all flex items-center justify-center gap-1"
+              >
+                {isClearing ? 'Clearing...' : 'Confirm, Clear Now'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Primary Navigation Sub-Tabs */}
       <div className="px-6 pt-4 bg-white border-b border-stone-200 flex justify-between items-center">
@@ -568,7 +684,7 @@ export const LedgerSheetComponent = React.memo(({
                                     }`}
                                   >
                                     <div className="flex items-center justify-center gap-11 text-md">
-                                      {stockVal}
+                                      {stockVal === 0 ? '' : stockVal}
                                       {isBelowMin && <AlertTriangle size={11} className="text-[#8a2214]" />}
                                     </div>
                                   </td>
@@ -588,7 +704,7 @@ export const LedgerSheetComponent = React.memo(({
                                         : 'bg-green-50/20 text-stone-700'
                                     }`}
                                   >
-                                    {stockVal}
+                                    {stockVal === 0 ? '' : stockVal}
                                   </td>
                                 );
                               })

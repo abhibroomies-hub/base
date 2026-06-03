@@ -69,7 +69,21 @@ import QRCode from 'qrcode';
 import autoTable from 'jspdf-autotable';
 import { format, subDays, startOfDay, isValid, eachDayOfInterval } from 'date-fns';
 import { INITIAL_ITEMS, OUTLETS, Item, PRIORITY_ITEM_NAMES } from './constants';
-import { db, auth, OperationType, handleFirestoreError } from './lib/firebase';
+import { 
+  db, 
+  auth, 
+  OperationType, 
+  handleFirestoreError,
+  DAILY_RECORDS_COL,
+  REQUIREMENTS_COL,
+  TRANSFERS_COL,
+  COLD_ROOM_COL,
+  GLOBAL_WASTAGE_COL,
+  DAILY_RECORDS_OLD_COL,
+  REQUIREMENTS_OLD_COL,
+  TRANSFERS_OLD_COL,
+  COLD_ROOM_OLD_COL
+} from './lib/firebase';
 import { LedgerSheetComponent } from './components/LedgerSheetComponent';
 import { 
   collection, 
@@ -366,6 +380,7 @@ const DashboardRowCell = React.memo(({
   placeholder = ""
 }: any) => {
   const [localValue, setLocalValue] = useState(value);
+  const [isFocused, setIsFocused] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   // Sync local value with prop value when prop changes (from external sync or dropdown change)
@@ -374,6 +389,7 @@ const DashboardRowCell = React.memo(({
   }, [value]);
 
   const handleBlur = () => {
+    setIsFocused(false);
     if (localValue !== value) {
       onChange(localValue);
     }
@@ -392,6 +408,13 @@ const DashboardRowCell = React.memo(({
     }
   };
 
+  const displayValue = useMemo(() => {
+    if (isFocused) {
+      return localValue ?? '';
+    }
+    return (localValue === 0 || localValue === '0' || localValue === '') ? '' : (localValue ?? '');
+  }, [localValue, isFocused]);
+
   return (
     <input 
       ref={inputRef}
@@ -401,10 +424,12 @@ const DashboardRowCell = React.memo(({
       data-col={dataCol}
       readOnly={readOnly}
       className={className}
-      value={localValue ?? ''}
+      value={displayValue}
       onChange={(e) => setLocalValue(e.target.value)}
+      onFocus={() => setIsFocused(true)}
       onBlur={handleBlur}
       onKeyDown={handleKeyDownInternal}
+      onWheel={(e) => e.currentTarget.blur()}
     />
   );
 });
@@ -694,7 +719,7 @@ const DashboardRow = React.memo(({
                 : 'text-slate-400 font-normal cursor-default'
             }`}
           >
-            {data.transf_in || 0}
+            {data.transf_in && Number(data.transf_in) !== 0 ? data.transf_in : ""}
           </button>
         </div>
 
@@ -904,6 +929,7 @@ const DashboardComponent = React.memo(({
   handleRejectTransferReceived,
   saveDailyData,
   handleSaveAndNextDay,
+  handleRolloverPreviousClosing,
   handleBulkEntry,
   getPreviousClosing,
   getCurrentRecords,
@@ -1246,6 +1272,14 @@ const DashboardComponent = React.memo(({
                 <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-red-600 rounded-full border-2 border-white animate-bounce" />
               )}
               Save
+            </button>
+            <button 
+              onClick={handleRolloverPreviousClosing} 
+              title="Copy previous day's closing stock as today's opening stock in 1 click"
+              className="px-3 md:px-4 py-1.5 border border-amber-300 text-[10px] md:text-[11px] font-extrabold bg-amber-50 hover:bg-amber-100 text-amber-800 transition-colors uppercase whitespace-nowrap flex items-center gap-1.5 active:scale-95 duration-100"
+            >
+              <RefreshCw size={11} className="text-amber-700" />
+              Prev Closing ➔ Opening
             </button>
             <button 
               onClick={handleSaveAndNextDay} 
@@ -2306,18 +2340,27 @@ const MasterItemsComponent = React.memo(({
 const HistoryPanelComponent = React.memo(({
   records,
   setRecords,
+  oldRecords,
+  setOldRecords,
   setCurrentDate,
   setView,
   setIsSidebarOpen,
 }: any) => {
   const [searchTerm, setSearchTerm] = useState('');
-  const dates = Object.keys(records || {}).sort((a, b) => b.localeCompare(a));
+  const [activeHistoryTab, setActiveHistoryTab] = useState<'current' | 'old'>('current');
+
+  const activeRecords = activeHistoryTab === 'current' ? records : oldRecords;
+  const dates = Object.keys(activeRecords || {}).sort((a, b) => b.localeCompare(a));
   
   const filteredDates = useMemo(() => {
     if (!searchTerm.trim()) return dates;
     return dates.filter(date => {
-      const formattedDate = format(new Date(date), 'dd MMM yyyy').toLowerCase();
-      return formattedDate.includes(searchTerm.toLowerCase());
+      try {
+        const formattedDate = format(new Date(date), 'dd MMM yyyy').toLowerCase();
+        return formattedDate.includes(searchTerm.toLowerCase());
+      } catch (e) {
+        return date.toLowerCase().includes(searchTerm.toLowerCase());
+      }
     });
   }, [dates, searchTerm]);
 
@@ -2327,15 +2370,89 @@ const HistoryPanelComponent = React.memo(({
     setSelectedDates(prev => prev.includes(date) ? prev.filter(d => d !== date) : [...prev, date]);
   };
 
-  const deleteSelected = () => {
-    if (confirm('Delete all selected dates history?')) {
-      setRecords(prev => {
-        const newRecs = { ...prev };
-        selectedDates.forEach(d => delete newRecs[d]);
-        localStorage.setItem('broomies_app_data_fallback', JSON.stringify(newRecs));
-        return newRecs;
-      });
+  const deleteSelected = async () => {
+    if (confirm(`Are you sure you want to delete the selected (${selectedDates.length}) history logs?`)) {
+      if (activeHistoryTab === 'current') {
+        setRecords((prev: any) => {
+          const newRecs = { ...prev };
+          selectedDates.forEach(d => delete newRecs[d]);
+          localStorage.setItem('broomies_db_daily_records_v2', JSON.stringify(newRecs));
+          return newRecs;
+        });
+
+        // Delete from Firestore
+        for (const date of selectedDates) {
+          try {
+            // Delete all possible outlet documents for this date in V2
+            for (const outlet of OUTLETS) {
+              await deleteDoc(doc(db, DAILY_RECORDS_COL, `${date}_${outlet.id}`));
+            }
+            await deleteDoc(doc(db, DAILY_RECORDS_COL, date));
+          } catch (e) {
+            console.error("Failed to delete v2 Firestore document:", e);
+          }
+        }
+      } else {
+        setOldRecords((prev: any) => {
+          const newRecs = { ...prev };
+          selectedDates.forEach(d => delete newRecs[d]);
+          localStorage.setItem('broomies_db_daily_records', JSON.stringify(newRecs));
+          return newRecs;
+        });
+
+        // Delete from legacy Firestore
+        for (const date of selectedDates) {
+          try {
+            for (const outlet of OUTLETS) {
+              await deleteDoc(doc(db, DAILY_RECORDS_OLD_COL, `${date}_${outlet.id}`));
+            }
+            await deleteDoc(doc(db, DAILY_RECORDS_OLD_COL, date));
+          } catch (e) {
+            console.error("Failed to delete old Firestore document:", e);
+          }
+        }
+      }
       setSelectedDates([]);
+    }
+  };
+
+  const handleSelectDate = async (date: string) => {
+    if (activeHistoryTab === 'old') {
+      if (confirm(`Do you want to restore and view this legacy day record (${format(new Date(date), 'dd MMM yyyy')})? This will safely copy the day's records into your active shift list (V2).`)) {
+        try {
+          const dateRecords = oldRecords[date] || {};
+          
+          // Copy outlet records to current V2 database
+          for (const outletId of Object.keys(dateRecords)) {
+            if (outletId === 'batches') continue;
+            const outletData = dateRecords[outletId];
+            const recordId = `${date}_${outletId}`;
+            await setDoc(doc(db, DAILY_RECORDS_COL, recordId), {
+              date,
+              outletId,
+              records: outletData,
+              updatedAt: new Date().toISOString()
+            }, { merge: true });
+          }
+
+          // Copy kitchen batches
+          if (dateRecords.batches) {
+            await setDoc(doc(db, DAILY_RECORDS_COL, date), {
+              date,
+              batches: dateRecords.batches
+            }, { merge: true });
+          }
+
+          setCurrentDate(date);
+          setView('dashboard');
+        } catch (e) {
+          console.error("Error importing old data to V2:", e);
+          alert("Could not copy archival layout records. Try again.");
+        }
+      }
+    } else {
+      setCurrentDate(date);
+      setView('dashboard');
     }
   };
 
@@ -2348,11 +2465,35 @@ const HistoryPanelComponent = React.memo(({
           </button>
           <div>
             <h2 className="text-3xl md:text-4xl font-brand-serif italic">Archive Log</h2>
-            <p className="text-[10px] font-bold uppercase tracking-widest opacity-60">Session History</p>
+            <p className="text-[10px] font-bold uppercase tracking-widest opacity-60">Session History & Dataset Administration</p>
           </div>
         </div>
-        <div className="flex items-center gap-3 flex-1 lg:flex-none">
-          <div className="relative flex-1 lg:w-64">
+        <div className="flex flex-wrap items-center gap-3">
+          {/* Dataset Toggles */}
+          <div className="border-2 border-brand-text p-1 flex gap-1 bg-white shadow-[2px_2px_0_0_rgba(0,0,0,1)] shrink-0">
+            <button
+              onClick={() => { setActiveHistoryTab('current'); setSelectedDates([]); }}
+              className={`px-3 py-1.5 text-[9px] font-black uppercase transition-all ${
+                activeHistoryTab === 'current' 
+                  ? 'bg-brand-text text-white shadow-[1px_1px_0_0_rgba(0,0,0,1)]' 
+                  : 'text-brand-text bg-white border border-transparent'
+              }`}
+            >
+              ACTIVE SYSTEM (V2)
+            </button>
+            <button
+              onClick={() => { setActiveHistoryTab('old'); setSelectedDates([]); }}
+              className={`px-3 py-1.5 text-[9px] font-black uppercase transition-all ${
+                activeHistoryTab === 'old' 
+                  ? 'bg-brand-text text-white shadow-[1px_1px_0_0_rgba(0,0,0,1)]' 
+                  : 'text-brand-text bg-white border border-transparent'
+              }`}
+            >
+              ARCHIVED DATA (OLD)
+            </button>
+          </div>
+
+          <div className="relative w-64">
             <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 opacity-30" />
             <input 
               type="text" 
@@ -2389,25 +2530,25 @@ const HistoryPanelComponent = React.memo(({
             </div>
             <div 
               className="flex-1 flex items-center justify-between p-4 md:p-6 cursor-pointer"
-              onClick={() => { setCurrentDate(date); setView('dashboard'); }}
+              onClick={() => handleSelectDate(date)}
             >
               <div className="flex flex-col md:flex-row md:items-center gap-1 md:gap-8">
                 <div className="text-sm md:text-base font-brand-mono font-black text-brand-text">
                   {format(new Date(date), 'dd MMM yyyy')}
                 </div>
                 <div className="text-[8px] md:text-[10px] font-bold uppercase tracking-[.2em] opacity-40">
-                  {Object.keys(records[date] || {}).length} SHIFTS
+                  {Object.keys(activeRecords[date] || {}).filter(k => k !== 'batches').length} OUTLETS
                 </div>
               </div>
-              <div className="text-[9px] font-black text-brand-text md:opacity-0 group-hover:opacity-100 uppercase underline decoration-2 underline-offset-4">
-                Restore
+              <div className="text-[9px] font-black text-brand-text md:opacity-0 group-hover:opacity-100 uppercase underline decoration-2 underline-offset-4 flex items-center gap-1">
+                {activeHistoryTab === 'old' ? 'Import & Restore' : 'View Ledger'}
               </div>
             </div>
           </div>
         ))}
         {dates.length === 0 && (
           <div className="text-center py-32 bg-brand-bg md:bg-white border border-dashed border-brand-border opacity-20 font-brand-mono uppercase text-sm">
-            Log Empty
+            No Records Available in this Dataset
           </div>
         )}
       </div>
@@ -3259,13 +3400,25 @@ export default function App() {
     return [];
   });
   const [records, setRecords] = useState<AllRecords>(() => {
-    const saved = localStorage.getItem('broomies_db_daily_records') || localStorage.getItem('broomies_app_data_fallback');
+    const saved = localStorage.getItem('broomies_db_daily_records_v2') || localStorage.getItem('broomies_app_data_fallback_v2');
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
         if (parsed && typeof parsed === 'object') return parsed;
       } catch (e) {
         console.error("Failed to parse daily records from local storage", e);
+      }
+    }
+    return {};
+  });
+  const [oldRecords, setOldRecords] = useState<AllRecords>(() => {
+    const saved = localStorage.getItem('broomies_db_daily_records') || localStorage.getItem('broomies_app_data_fallback');
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (parsed && typeof parsed === 'object') return parsed;
+      } catch (e) {
+        console.error("Failed to parse old daily records from local storage", e);
       }
     }
     return {};
@@ -3328,31 +3481,138 @@ export default function App() {
 
   // --- FIRESTORE REAL-TIME SYNCHRONIZATION ENGINE ---
   useEffect(() => {
-    const unsubDailyRecords = onSnapshot(collection(db, 'daily_records'), (snapshot) => {
-      const dbRecords: AllRecords = {};
-      snapshot.forEach((doc) => {
-        const data = doc.data();
-        if (data && data.date && data.outletId && data.records) {
-          if (!dbRecords[data.date]) {
-            dbRecords[data.date] = {};
+    const unsubDailyRecords = onSnapshot(collection(db, DAILY_RECORDS_COL), (snapshot) => {
+      setRecords(prev => {
+        const nextRecords = { ...prev };
+        let hasChanges = false;
+        
+        snapshot.docChanges().forEach((change) => {
+          const docId = change.doc.id;
+          const data = change.doc.data();
+          hasChanges = true;
+          
+          if (change.type === 'removed') {
+            if (docId.includes('_')) {
+              // Outlet record (e.g. 2026-06-03_OutletId)
+              const parts = docId.split('_');
+              const dateKey = parts[0];
+              const outletId = parts.slice(1).join('_');
+              if (nextRecords[dateKey]) {
+                const subRecs = { ...nextRecords[dateKey] };
+                delete subRecs[outletId];
+                if (Object.keys(subRecs).length === 0) {
+                  delete nextRecords[dateKey];
+                } else {
+                  nextRecords[dateKey] = subRecs;
+                }
+              }
+            } else {
+              // Kitchen batch record (e.g. 2026-06-03)
+              const dateKey = docId;
+              if (nextRecords[dateKey]) {
+                const subRecs = { ...nextRecords[dateKey] };
+                delete subRecs.batches;
+                if (Object.keys(subRecs).length === 0) {
+                  delete nextRecords[dateKey];
+                } else {
+                  nextRecords[dateKey] = subRecs;
+                }
+              }
+            }
+          } else {
+            // 'added' or 'modified'
+            if (data && data.date && data.outletId && data.records) {
+              if (!nextRecords[data.date]) {
+                nextRecords[data.date] = {};
+              }
+              nextRecords[data.date] = {
+                ...nextRecords[data.date],
+                [data.outletId]: data.records
+              };
+            } else if (data && data.batches && !docId.includes('_')) {
+              const dateKey = docId;
+              if (!nextRecords[dateKey]) {
+                nextRecords[dateKey] = {};
+              }
+              nextRecords[dateKey] = {
+                ...nextRecords[dateKey],
+                batches: data.batches
+              };
+            }
           }
-          dbRecords[data.date][data.outletId] = data.records;
-        }
-      });
-      if (Object.keys(dbRecords).length > 0) {
-        setRecords(prev => {
-          // Merge local and incoming cloud records smoothly
-          return {
-            ...prev,
-            ...dbRecords
-          };
         });
-      }
+        
+        return hasChanges ? nextRecords : prev;
+      });
     }, (error) => {
-      console.error("Error listening to daily_records:", error);
+      console.error("Error listening to daily_records_v2:", error);
     });
 
-    const unsubRequirements = onSnapshot(collection(db, 'requirements'), (snapshot) => {
+    const unsubOldDailyRecords = onSnapshot(collection(db, DAILY_RECORDS_OLD_COL), (snapshot) => {
+      setOldRecords(prev => {
+        const nextRecords = { ...prev };
+        let hasChanges = false;
+        
+        snapshot.docChanges().forEach((change) => {
+          const docId = change.doc.id;
+          const data = change.doc.data();
+          hasChanges = true;
+          
+          if (change.type === 'removed') {
+            if (docId.includes('_')) {
+              const parts = docId.split('_');
+              const dateKey = parts[0];
+              const outletId = parts.slice(1).join('_');
+              if (nextRecords[dateKey]) {
+                const subRecs = { ...nextRecords[dateKey] };
+                delete subRecs[outletId];
+                if (Object.keys(subRecs).length === 0) {
+                  delete nextRecords[dateKey];
+                } else {
+                  nextRecords[dateKey] = subRecs;
+                }
+              }
+            } else {
+              const dateKey = docId;
+              if (nextRecords[dateKey]) {
+                const subRecs = { ...nextRecords[dateKey] };
+                delete subRecs.batches;
+                if (Object.keys(subRecs).length === 0) {
+                  delete nextRecords[dateKey];
+                } else {
+                  nextRecords[dateKey] = subRecs;
+                }
+              }
+            }
+          } else {
+            if (data && data.date && data.outletId && data.records) {
+              if (!nextRecords[data.date]) {
+                nextRecords[data.date] = {};
+              }
+              nextRecords[data.date] = {
+                ...nextRecords[data.date],
+                [data.outletId]: data.records
+              };
+            } else if (data && data.batches && !docId.includes('_')) {
+              const dateKey = docId;
+              if (!nextRecords[dateKey]) {
+                nextRecords[dateKey] = {};
+              }
+              nextRecords[dateKey] = {
+                ...nextRecords[data.date] || {},
+                batches: data.batches
+              };
+            }
+          }
+        });
+        
+        return hasChanges ? nextRecords : prev;
+      });
+    }, (error) => {
+      console.error("Error listening to old daily_records:", error);
+    });
+
+    const unsubRequirements = onSnapshot(collection(db, REQUIREMENTS_COL), (snapshot) => {
       const list: Requirement[] = [];
       snapshot.forEach((doc) => {
         const data = doc.data();
@@ -3366,10 +3626,10 @@ export default function App() {
       });
       setRequirements(list);
     }, (error) => {
-      console.error("Error listening to requirements:", error);
+      console.error("Error listening to requirements v2:", error);
     });
 
-    const unsubTransfers = onSnapshot(collection(db, 'transfers'), (snapshot) => {
+    const unsubTransfers = onSnapshot(collection(db, TRANSFERS_COL), (snapshot) => {
       const list: Transfer[] = [];
       snapshot.forEach((doc) => {
         const data = doc.data() as Transfer;
@@ -3379,7 +3639,7 @@ export default function App() {
       });
       setPendingTransfers(list);
     }, (error) => {
-      console.error("Error listening to transfers:", error);
+      console.error("Error listening to transfers v2:", error);
     });
 
     const unsubPermissions = onSnapshot(collection(db, 'outlet_permissions'), (snapshot) => {
@@ -3471,6 +3731,7 @@ export default function App() {
 
     return () => {
       unsubDailyRecords();
+      unsubOldDailyRecords();
       unsubRequirements();
       unsubTransfers();
       unsubPermissions();
@@ -4132,7 +4393,7 @@ export default function App() {
           });
 
           if (changed) {
-            const docRef = doc(db, 'daily_records', `${currDate}_${outlet.id}`);
+            const docRef = doc(db, DAILY_RECORDS_COL, `${currDate}_${outlet.id}`);
             batch.update(docRef, { records: updatedRecords });
             count++;
           }
@@ -4195,13 +4456,13 @@ export default function App() {
 
       // Synchronize Transfer and Requirement changes directly to Firestore
       try {
-        await setDoc(doc(db, 'transfers', generatedId), newTransfer);
+        await setDoc(doc(db, TRANSFERS_COL, generatedId), newTransfer);
         if (updatedReqQty !== -1) {
           const reqId = `${outletId}_${itemId}`;
           if (updatedReqQty === 0) {
-            await deleteDoc(doc(db, 'requirements', reqId));
+            await deleteDoc(doc(db, REQUIREMENTS_COL, reqId));
           } else {
-            await setDoc(doc(db, 'requirements', reqId), {
+            await setDoc(doc(db, REQUIREMENTS_COL, reqId), {
               outletId,
               itemId,
               quantity: updatedReqQty,
@@ -4253,14 +4514,14 @@ export default function App() {
       // Synchronize accepted record and transfer status with Firestore
       if (updatedOutlet) {
         const recordId = `${transfer.date}_${transfer.toOutletId}`;
-        await setDoc(doc(db, 'daily_records', recordId), {
+        await setDoc(doc(db, DAILY_RECORDS_COL, recordId), {
           date: transfer.date,
           outletId: transfer.toOutletId,
           records: updatedOutlet
         }, { merge: true });
       }
 
-      await setDoc(doc(db, 'transfers', transfer.id), { status: 'accepted' }, { merge: true });
+      await setDoc(doc(db, TRANSFERS_COL, transfer.id), { status: 'accepted' }, { merge: true });
 
       // 2. Update transfer status state locally
       setPendingTransfers(prev => 
@@ -4280,7 +4541,7 @@ export default function App() {
         prev.map(t => t.id === transfer.id ? { ...t, status: 'rejected' } : t)
       );
 
-      await setDoc(doc(db, 'transfers', transfer.id), { status: 'rejected' }, { merge: true });
+      await setDoc(doc(db, TRANSFERS_COL, transfer.id), { status: 'rejected' }, { merge: true });
 
       addNotification(`TRANSFER REJECTED`, 'info');
     } catch (e) {
@@ -4321,7 +4582,7 @@ export default function App() {
     setLoading(true);
     try {
       const recordId = `${currentDate}_${selectedOutletId}`;
-      const docRef = doc(db, 'daily_records', recordId);
+      const docRef = doc(db, DAILY_RECORDS_COL, recordId);
       const targetRecords = records[currentDate]?.[selectedOutletId] || {};
       
       await setDoc(docRef, {
@@ -4335,7 +4596,7 @@ export default function App() {
     } catch (e) {
       console.error("Failed to save daily data to Firestore:", e);
       addNotification('CLOUD SYNC FAILURE. RECORD KEPT LOCALLY.', 'error');
-      handleFirestoreError(e, OperationType.WRITE, `daily_records/${currentDate}_${selectedOutletId}`);
+      handleFirestoreError(e, OperationType.WRITE, `${DAILY_RECORDS_COL}/${currentDate}_${selectedOutletId}`);
     } finally {
       setLoading(false);
     }
@@ -4376,6 +4637,71 @@ export default function App() {
     window.addEventListener('keydown', handleGlobalKeyDown);
     return () => window.removeEventListener('keydown', handleGlobalKeyDown);
   }, [saveDailyData, view]);
+
+  const handleRolloverPreviousClosing = useCallback(async () => {
+    setIsDirty(true);
+    let updatedCount = 0;
+
+    setRecords(prev => {
+      const dayRecords = { ...(prev[currentDate] || {}) };
+      const outletRecords = { ...(dayRecords[selectedOutletId] || {}) };
+
+      items.forEach((item: any) => {
+        if (item.status === 'inactive') return;
+
+        const prevClosing = getPreviousClosingInternal(prev, item.id, currentDate, selectedOutletId);
+        const existingData = outletRecords[item.id];
+        
+        const currentData = existingData ? { ...existingData } : {
+          opening: prevClosing,
+          received: 0,
+          transf_in: 0,
+          transf_in_sources: [],
+          sold: 0,
+          testing: 0,
+          returned: 0,
+          wastage: 0,
+          transf_out: 0,
+          transf_out_to: '',
+          closing: 0,
+          calculationMode: 'sold'
+        };
+
+        // Replace the opening stock with the previous day's closing stock
+        currentData.opening = Number(prevClosing);
+
+        // Recalculate closing or sold based on mode
+        if (currentData.calculationMode === 'sold') {
+          currentData.closing = Number(currentData.opening) + Number(currentData.received) + Number(currentData.transf_in || 0) - Number(currentData.sold) - Number(currentData.testing) - Number(currentData.returned) - Number(currentData.transf_out);
+        } else {
+          currentData.sold = (Number(currentData.opening) + Number(currentData.received) + Number(currentData.transf_in || 0)) - (Number(currentData.testing) + Number(currentData.returned) + Number(currentData.transf_out) + Number(currentData.closing));
+        }
+
+        outletRecords[item.id] = currentData;
+        updatedCount++;
+      });
+
+      dayRecords[selectedOutletId] = outletRecords;
+      
+      // Save directly to Firestore for safety and real-time sync
+      const recordId = `${currentDate}_${selectedOutletId}`;
+      setDoc(doc(db, DAILY_RECORDS_COL, recordId), {
+        date: currentDate,
+        outletId: selectedOutletId,
+        records: outletRecords,
+        updatedAt: new Date().toISOString()
+      }, { merge: true }).catch(err => {
+        console.error("Error writing rollover records to Firestore:", err);
+      });
+
+      return {
+        ...prev,
+        [currentDate]: dayRecords
+      };
+    });
+
+    addNotification(`Rolled over previous closing as today's opening stock!`, 'success');
+  }, [currentDate, selectedOutletId, items, db, addNotification]);
 
 
   if (!isAuthenticated) {
@@ -4820,6 +5146,7 @@ export default function App() {
             handleRejectTransferReceived={handleRejectTransferReceived}
             saveDailyData={saveDailyData}
             handleSaveAndNextDay={handleSaveAndNextDay}
+            handleRolloverPreviousClosing={handleRolloverPreviousClosing}
             handleBulkEntry={handleBulkEntry}
             getPreviousClosing={getPreviousClosing}
             getCurrentRecords={getCurrentRecords}
@@ -4884,6 +5211,8 @@ export default function App() {
           <HistoryPanelComponent 
             records={records}
             setRecords={setRecords}
+            oldRecords={oldRecords}
+            setOldRecords={setOldRecords}
             setCurrentDate={setCurrentDate}
             setView={setView}
             setIsSidebarOpen={setIsSidebarOpen}
@@ -4958,6 +5287,7 @@ export default function App() {
             calculateSold={calculateSold}
             calculateClosing={calculateClosing}
             setIsSidebarOpen={setIsSidebarOpen}
+            setPendingTransfers={setPendingTransfers}
           />
         )}
         {view === 'distribution' && (
@@ -6484,7 +6814,7 @@ const LifecycleComponent = React.memo(({ items, records, setRecords, currentDate
 
       for (const key of Object.keys(clustered)) {
         const cluster = clustered[key];
-        const docRef = doc(db, 'daily_records', key);
+        const docRef = doc(db, DAILY_RECORDS_COL, key);
         
         const updateObj: any = {
           date: cluster.date,
@@ -7181,9 +7511,9 @@ const RequirementsComponent = React.memo(({ items, requirements, selectedOutletI
     const reqId = `${outletId}_${itemId}`;
     try {
       if (qty <= 0) {
-        await deleteDoc(doc(db, 'requirements', reqId));
+        await deleteDoc(doc(db, REQUIREMENTS_COL, reqId));
       } else {
-        await setDoc(doc(db, 'requirements', reqId), {
+        await setDoc(doc(db, REQUIREMENTS_COL, reqId), {
           outletId,
           itemId,
           quantity: qty,
@@ -7428,7 +7758,7 @@ const GlobalClosingComponent = React.memo(({ items, records, currentDate, setCur
       // Here we just alert success in this version as the user asked for a "section to track wastage"
       
       const wastageId = `${currentDate}_${item.id}_global`;
-      await setDoc(doc(db, 'global_wastage', wastageId), {
+      await setDoc(doc(db, GLOBAL_WASTAGE_COL, wastageId), {
         date: currentDate,
         itemId: item.id,
         quantity: totalToWastage,
@@ -7439,7 +7769,7 @@ const GlobalClosingComponent = React.memo(({ items, records, currentDate, setCur
       alert(`Success: ${totalToWastage} units of ${item.name} moved to Global Wastage Ledger.`);
       setSelectedReturnItem(null);
     } catch (e) {
-      handleFirestoreError(e, OperationType.WRITE, 'global_wastage');
+      handleFirestoreError(e, OperationType.WRITE, GLOBAL_WASTAGE_COL);
     }
   };
 
@@ -7451,7 +7781,7 @@ const GlobalClosingComponent = React.memo(({ items, records, currentDate, setCur
     try {
       // Add the returned quantity to the target outlet's received stock in DAILY_RECORDS
       const recordId = `${currentDate}_${targetOutletId}`;
-      const docRef = doc(db, 'daily_records', recordId);
+      const docRef = doc(db, DAILY_RECORDS_COL, recordId);
       
       const existingData = records[currentDate]?.[targetOutletId]?.[item.id] || {
         opening: getPreviousClosingInternal(records, item.id, currentDate, targetOutletId),
@@ -7490,7 +7820,7 @@ const GlobalClosingComponent = React.memo(({ items, records, currentDate, setCur
       if (e.code === 'not-found') {
         // Create if missing
         const recordId = `${currentDate}_${targetOutletId}`;
-        const docRef = doc(db, 'daily_records', recordId);
+        const docRef = doc(db, DAILY_RECORDS_COL, recordId);
         const opening = getPreviousClosingInternal(records, item.id, currentDate, targetOutletId);
         const newData = {
           opening,
@@ -7506,7 +7836,7 @@ const GlobalClosingComponent = React.memo(({ items, records, currentDate, setCur
         });
         alert(`Success: New day record created for target outlet.`);
       } else {
-        handleFirestoreError(e, OperationType.WRITE, 'daily_records');
+        handleFirestoreError(e, OperationType.WRITE, DAILY_RECORDS_COL);
       }
     }
   };
@@ -8015,7 +8345,7 @@ const ProductionComponent = React.memo(({ items, records, setRecords, currentDat
   useEffect(() => {
     const fortyFiveDaysAgo = format(subDays(new Date(), 45), 'yyyy-MM-dd');
     const q = query(
-      collection(db, 'cold_room_records'),
+      collection(db, COLD_ROOM_COL),
       where('date', '>=', fortyFiveDaysAgo)
     );
 
@@ -8028,7 +8358,7 @@ const ProductionComponent = React.memo(({ items, records, setRecords, currentDat
         data[d.date][d.itemId] = d.quantity;
       });
       setColdRoomState(data);
-    }, (err) => handleFirestoreError(err, OperationType.GET, 'cold_room_records'));
+    }, (err) => handleFirestoreError(err, OperationType.GET, COLD_ROOM_COL));
     return unsub;
   }, []);
 
@@ -8092,7 +8422,7 @@ const ProductionComponent = React.memo(({ items, records, setRecords, currentDat
     });
 
     try {
-      const docRef = doc(db, 'daily_records', docId);
+      const docRef = doc(db, DAILY_RECORDS_COL, docId);
       try {
         await updateDoc(docRef, {
           [`batches.${batchId}`]: newBatch
@@ -8110,7 +8440,7 @@ const ProductionComponent = React.memo(({ items, records, setRecords, currentDat
         }
       }
     } catch (e) {
-      handleFirestoreError(e, OperationType.WRITE, `daily_records/${docId}`);
+      handleFirestoreError(e, OperationType.WRITE, `${DAILY_RECORDS_COL}/${docId}`);
     }
   };
 
@@ -8254,27 +8584,27 @@ const ProductionComponent = React.memo(({ items, records, setRecords, currentDat
     };
 
     try {
-      await setDoc(doc(db, 'daily_records', currentDate), {
+      await setDoc(doc(db, DAILY_RECORDS_COL, currentDate), {
         batches: {
           [batchId]: newBatch
         }
       }, { merge: true });
     } catch (e) {
-      handleFirestoreError(e, OperationType.WRITE, `daily_records/${currentDate}`);
+      handleFirestoreError(e, OperationType.WRITE, `${DAILY_RECORDS_COL}/${currentDate}`);
     }
   };
 
   const updateColdRoom = async (itemId: string, qty: number) => {
     const id = `${currentDate}_${itemId}`;
     try {
-      await setDoc(doc(db, 'cold_room_records', id), {
+      await setDoc(doc(db, COLD_ROOM_COL, id), {
         date: currentDate,
         itemId,
         itemName: items.find((i: any) => i.id === itemId)?.name,
         quantity: qty
       });
     } catch (e) {
-      handleFirestoreError(e, OperationType.WRITE, 'cold_room_records');
+      handleFirestoreError(e, OperationType.WRITE, COLD_ROOM_COL);
     }
   };
 
