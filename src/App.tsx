@@ -3741,15 +3741,27 @@ export default function App() {
     };
   }, []);
 
-  // Debounced LocalStorage Backup
+  // Debounced LocalStorage Backup for Active Records (V2)
   useEffect(() => {
     const timer = setTimeout(() => {
       if (Object.keys(records).length > 0) {
-        localStorage.setItem('broomies_app_data_fallback', JSON.stringify(records));
+        localStorage.setItem('broomies_db_daily_records_v2', JSON.stringify(records));
+        localStorage.setItem('broomies_app_data_fallback_v2', JSON.stringify(records));
       }
-    }, 2000); // 2 second delay to avoid blocking main thread during active typing
+    }, 1500); // Debounce to allow seamless typing without blocking main thread
     return () => clearTimeout(timer);
   }, [records]);
+
+  // Debounced LocalStorage Backup for Legacy Archive Records (Old)
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (Object.keys(oldRecords).length > 0) {
+        localStorage.setItem('broomies_db_daily_records', JSON.stringify(oldRecords));
+        localStorage.setItem('broomies_app_data_fallback', JSON.stringify(oldRecords));
+      }
+    }, 1500);
+    return () => clearTimeout(timer);
+  }, [oldRecords]);
 
   // Check for legacy data on mount
   useEffect(() => {
@@ -4178,10 +4190,6 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('broomies_db_transfers', JSON.stringify(pendingTransfers));
   }, [pendingTransfers]);
-
-  useEffect(() => {
-    localStorage.setItem('broomies_db_daily_records', JSON.stringify(records));
-  }, [records]);
 
   useEffect(() => {
     localStorage.setItem('broomies_db_outlet_permissions', JSON.stringify(permissions));

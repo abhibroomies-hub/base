@@ -71,6 +71,61 @@ export const MASTER_LEDGER_ITEMS: MasterLedgerItem[] = [
   { sNo: 32, id: '248', category: 'Savouries & Snacks', name: 'Stuffed Kulcha', minStock: { '42': 2, '31': 2, '35': 2, '88': 2, total: 8 } }
 ];
 
+// Inline editable cell component matching physical ledger entry speed
+const LedgerCellInput = React.memo(({ 
+  initialValue, 
+  onSave, 
+  isBelowMin 
+}: { 
+  initialValue: number; 
+  onSave: (val: number) => void; 
+  isBelowMin: boolean;
+}) => {
+  const [val, setVal] = useState<string>(initialValue === 0 ? '' : String(initialValue));
+
+  // Sync state if initialValue changes from outside
+  React.useEffect(() => {
+    setVal(initialValue === 0 ? '' : String(initialValue));
+  }, [initialValue]);
+
+  const handleBlur = () => {
+    const num = val === '' ? 0 : Number(val);
+    if (!isNaN(num) && num !== initialValue) {
+      onSave(num);
+    }
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      (e.target as HTMLInputElement).blur();
+    }
+  };
+
+  return (
+    <input
+      type="text"
+      inputMode="numeric"
+      pattern="[0-9]*"
+      value={val}
+      onChange={(e) => {
+        // Only allow positive integers
+        const cleanVal = e.target.value.replace(/[^0-9]/g, '');
+        setVal(cleanVal);
+      }}
+      onBlur={handleBlur}
+      onKeyDown={handleKeyDown}
+      placeholder="-"
+      className={`w-14 h-8 px-1 text-center font-bold font-mono text-xs rounded border transition-all focus:outline-none focus:ring-2 focus:ring-[#4F2C1D] ${
+        isBelowMin 
+          ? 'bg-[#8a2214]/10 text-[#8a2214] border-[#8a2214]/30 focus:bg-white' 
+          : 'bg-green-50/50 text-green-800 border-green-200/50 focus:bg-white'
+      }`}
+    />
+  );
+});
+
+LedgerCellInput.displayName = 'LedgerCellInput';
+
 export const OUTLETS = [
   { id: '31', name: 'Sec 31' },
   { id: '42', name: 'Sec 42' },
@@ -395,6 +450,60 @@ export const LedgerSheetComponent = React.memo(({
     }
   };
 
+  const handleCellChange = async (dateStr: string, outletId: string, itemId: string, newValue: number) => {
+    // 1. Update React Local state first for responsive typing
+    setRecords((prev: any) => {
+      const nextRecords = { ...prev };
+      if (!nextRecords[dateStr]) nextRecords[dateStr] = {};
+      if (!nextRecords[dateStr][outletId]) nextRecords[dateStr][outletId] = {};
+      
+      const existingItem = nextRecords[dateStr][outletId][itemId] || {
+        opening: 0, received: 0, sold: 0, testing: 0, returned: 0, wastage: 0, transf_out: 0, closing: 0, calculationMode: 'closing'
+      };
+
+      nextRecords[dateStr][outletId][itemId] = {
+        ...existingItem,
+        closing: newValue,
+        calculationMode: 'closing'
+      };
+      
+      // Save backup to LocalStorage for offline resilience
+      localStorage.setItem('broomies_db_daily_records_v2', JSON.stringify(nextRecords));
+      return nextRecords;
+    });
+
+    // 2. Synchronously write directly to Firestore for safety
+    try {
+      const docId = `${dateStr}_${outletId}`;
+      const docRef = doc(db, DAILY_RECORDS_COL, docId);
+      
+      const dayData = records[dateStr] || {};
+      const outletData = dayData[outletId] || {};
+      
+      const existingItem = outletData[itemId] || {
+        opening: 0, received: 0, sold: 0, testing: 0, returned: 0, wastage: 0, transf_out: 0, closing: 0, calculationMode: 'closing'
+      };
+
+      const updatedRecords = {
+        ...outletData,
+        [itemId]: {
+          ...existingItem,
+          closing: newValue,
+          calculationMode: 'closing'
+        }
+      };
+
+      await setDoc(docRef, {
+        date: dateStr,
+        outletId: outletId,
+        records: updatedRecords,
+        updatedAt: new Date().toISOString()
+      }, { merge: true });
+    } catch (e: any) {
+      console.error("Failed to save manual ledger cell value to Firestore:", e);
+    }
+  };
+
   const filteredItems = useMemo(() => {
     return MASTER_LEDGER_ITEMS.filter(item => 
       item.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -677,15 +786,19 @@ export const LedgerSheetComponent = React.memo(({
                                 return (
                                   <td 
                                     key={outlet.id} 
-                                    className={`p-3 text-center font-bold font-mono transition-all ${
+                                    className={`p-1.5 text-center transition-all ${
                                       isBelowMin 
-                                        ? 'bg-[#8a2214]/10 text-[#8a2214] border-stone-200' 
-                                        : 'bg-green-50/45 text-green-700'
+                                        ? 'bg-[#8a2214]/5' 
+                                        : 'bg-green-50/15'
                                     }`}
                                   >
-                                    <div className="flex items-center justify-center gap-11 text-md">
-                                      {stockVal === 0 ? '' : stockVal}
-                                      {isBelowMin && <AlertTriangle size={11} className="text-[#8a2214]" />}
+                                    <div className="flex items-center justify-center gap-1.5">
+                                      <LedgerCellInput
+                                        initialValue={stockVal}
+                                        onSave={(newVal) => handleCellChange(currentDate, outlet.id, item.id, newVal)}
+                                        isBelowMin={isBelowMin}
+                                      />
+                                      {isBelowMin && <AlertTriangle size={12} className="text-[#8a2214] shrink-0" />}
                                     </div>
                                   </td>
                                 );
@@ -698,13 +811,19 @@ export const LedgerSheetComponent = React.memo(({
                                 return (
                                   <td 
                                     key={dateStr}
-                                    className={`p-3 text-center font-bold font-mono ${
+                                    className={`p-1.5 text-center ${
                                       isBelowMin 
-                                        ? 'bg-[#8a2214]/5 text-[#8a2214]' 
-                                        : 'bg-green-50/20 text-stone-700'
+                                        ? 'bg-[#8a2214]/5' 
+                                        : 'bg-green-50/15'
                                     }`}
                                   >
-                                    {stockVal === 0 ? '' : stockVal}
+                                    <div className="flex items-center justify-center">
+                                      <LedgerCellInput
+                                        initialValue={stockVal}
+                                        onSave={(newVal) => handleCellChange(dateStr, selectedOutletFilter, item.id, newVal)}
+                                        isBelowMin={isBelowMin}
+                                      />
+                                    </div>
                                   </td>
                                 );
                               })
