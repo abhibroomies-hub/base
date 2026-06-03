@@ -3,12 +3,297 @@ import path from "path";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, Type } from "@google/genai";
 import dotenv from "dotenv";
+import { initializeApp } from 'firebase/app';
+import { getFirestore, collection, getDocs, doc, setDoc, getDoc } from 'firebase/firestore';
+import fs from 'fs';
 
 dotenv.config();
+
+const firebaseConfig = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'firebase-applet-config.json'), 'utf8'));
+const firebaseApp = initializeApp(firebaseConfig);
+const db = getFirestore(firebaseApp, firebaseConfig.firestoreDatabaseId);
+
+async function seedDataOnBoot() {
+  try {
+    console.log("Seeding June 2nd transfers and ingredients database changes on boot...");
+
+    // 1. Ensure "2 Pastry Box" (id '1778164053176') is created
+    const customItemId = '1778164053176';
+    await setDoc(doc(db, 'items', customItemId), {
+      id: customItemId,
+      name: '2 Pastry Box',
+      category: 'Others',
+      status: 'active',
+      barcode: 'BR' + customItemId.substring(6)
+    }, { merge: true });
+
+    // 2. Insert ingredients & stock
+    const ingredients = [
+      { id: 'red_cherry', name: 'RED CHERRY', unit: 'kg', currentStock: 6, lowStockThreshold: 1 },
+      { id: 'pineapple_tin', name: 'PINEAPPLE TIN', unit: 'tin', currentStock: 1, lowStockThreshold: 1 },
+      { id: 'nutella_filling', name: 'NUTELLA FILLING', unit: 'kg', currentStock: 1, lowStockThreshold: 1 },
+      { id: 'blueberry_tin', name: 'BLUEBERRY TIN', unit: 'tin', currentStock: 1, lowStockThreshold: 1 },
+      { id: 'butterscotch_nuts', name: 'BUTTERSCOTCH NUTS', unit: 'kg', currentStock: 1, lowStockThreshold: 1 }
+    ];
+
+    for (const ing of ingredients) {
+      await setDoc(doc(db, 'ingredients', ing.id), ing, { merge: true });
+    }
+
+    // 3. Retrieve all items to build ID -> Name map
+    const itemSnap = await getDocs(collection(db, 'items'));
+    const itemMap = new Map<string, string>();
+    itemSnap.forEach(doc => {
+      const d = doc.data();
+      itemMap.set(doc.id, d.name);
+    });
+
+    // Extra custom ones
+    itemMap.set('1777393257084', 'NUTELLA FILLED DOUGHNUT');
+    itemMap.set('1777399948783', 'CHOCOLATE DOUGHNUT');
+    itemMap.set('1777402417410', 'VANILLA CREAM ROLL');
+    itemMap.set('1778163802051', 'CHOCOLATE CREAM ROLL');
+    itemMap.set('1778164031421', 'CHOCOLATE CUP CAKE ');
+    itemMap.set('1778164043175', 'VANILLA CUP CAKE ');
+    itemMap.set('1778164053176', '2 Pastry Box');
+
+    // 4. Data list of the transfers
+    const transfers = [
+      // 3. Kitchen -> Sec 35
+      { from: 'bk', to: '35', item: '87', qty: 1 },
+      { from: 'bk', to: '35', item: '95', qty: 1 },
+      { from: 'bk', to: '35', item: '182', qty: 1 },
+      { from: 'bk', to: '35', item: '79', qty: 1 },
+      { from: 'bk', to: '35', item: '217', qty: 3 },
+      { from: 'bk', to: '35', item: '224', qty: 2 },
+      { from: 'bk', to: '35', item: '216', qty: 2 },
+      { from: 'bk', to: '35', item: '1777393257084', qty: 1 },
+      { from: 'bk', to: '35', item: '1778164053176', qty: 1 },
+
+      // 4. Kitchen -> Sec 31
+      { from: 'bk', to: '31', item: '170', qty: 1 },
+      { from: 'bk', to: '31', item: '39', qty: 1 },
+
+      // 5. Bass Kitchen -> Sec 31
+      { from: 'bk', to: '31', item: '81', qty: 2 },
+      { from: 'bk', to: '31', item: '87', qty: 1 },
+      { from: 'bk', to: '31', item: '182', qty: 1 },
+      { from: 'bk', to: '31', item: '78', qty: 1 },
+
+      // 6. Cake Kitchen -> Sec 42
+      { from: 'bk', to: '42', item: '79', qty: 1 },
+      { from: 'bk', to: '42', item: '170', qty: 1 },
+      { from: 'bk', to: '42', item: '91', qty: 1 },
+      { from: 'bk', to: '42', item: '85', qty: 4 },
+      { from: 'bk', to: '42', item: '132', qty: 1 },
+      { from: 'bk', to: '42', item: '87', qty: 1 },
+      { from: 'bk', to: '42', item: '83', qty: 1 },
+      { from: 'bk', to: '42', item: '97', qty: 1 },
+      { from: 'bk', to: '42', item: '81', qty: 1 },
+      { from: 'bk', to: '42', item: '89', qty: 1 },
+      { from: 'bk', to: '42', item: '84', qty: 2 },
+      { from: 'bk', to: '42', item: '217', qty: 4 },
+      { from: 'bk', to: '42', item: '213', qty: 2 },
+      { from: 'bk', to: '42', item: '216', qty: 8 },
+      { from: 'bk', to: '42', item: '1777399948783', qty: 4 },
+      { from: 'bk', to: '42', item: '232', qty: 4 },
+
+      // 7. Cake Kitchen -> Sec 31
+      { from: 'bk', to: '31', item: '182', qty: 2 },
+      { from: 'bk', to: '31', item: '97', qty: 2 },
+      { from: 'bk', to: '31', item: '83', qty: 2 },
+      { from: 'bk', to: '31', item: '85', qty: 3 },
+      { from: 'bk', to: '31', item: '87', qty: 2 },
+      { from: 'bk', to: '31', item: '170', qty: 2 },
+      { from: 'bk', to: '31', item: '216', qty: 6 },
+
+      // 8. Cake Kitchen -> Sec 35
+      { from: 'bk', to: '35', item: '91', qty: 2 },
+      { from: 'bk', to: '35', item: '88', qty: 1 },
+      { from: 'bk', to: '35', item: '95', qty: 1 },
+      { from: 'bk', to: '35', item: '87', qty: 1 },
+      { from: 'bk', to: '35', item: '170', qty: 1 },
+      { from: 'bk', to: '35', item: '79', qty: 1 },
+      { from: 'bk', to: '35', item: '182', qty: 1 },
+      { from: 'bk', to: '35', item: '225', qty: 2 },
+      { from: 'bk', to: '35', item: '213', qty: 2 },
+      { from: 'bk', to: '35', item: '216', qty: 2 },
+      { from: 'bk', to: '35', item: '217', qty: 2 },
+      { from: 'bk', to: '35', item: '210', qty: 1 },
+      { from: 'bk', to: '35', item: '1777393257084', qty: 1 },
+
+      // 9. Cake Kitchen -> Sec 88
+      { from: 'bk', to: '88', item: '81', qty: 2 },
+      { from: 'bk', to: '88', item: '95', qty: 1 },
+      { from: 'bk', to: '88', item: '177', qty: 1 },
+      { from: 'bk', to: '88', item: '87', qty: 1 },
+      { from: 'bk', to: '88', item: '83', qty: 1 },
+      { from: 'bk', to: '88', item: '85', qty: 1 },
+      { from: 'bk', to: '88', item: '79', qty: 1 },
+      { from: 'bk', to: '88', item: '97', qty: 1 },
+      { from: 'bk', to: '88', item: '89', qty: 1 },
+      { from: 'bk', to: '88', item: '224', qty: 3 },
+      { from: 'bk', to: '88', item: '216', qty: 6 },
+      { from: 'bk', to: '88', item: '217', qty: 3 },
+      { from: 'bk', to: '88', item: '213', qty: 3 },
+      { from: 'bk', to: '88', item: '216', qty: 2 },
+      { from: 'bk', to: '88', item: '215', qty: 2 },
+      { from: 'bk', to: '88', item: '1777399948783', qty: 2 },
+      { from: 'bk', to: '88', item: '1777393257084', qty: 3 },
+      { from: 'bk', to: '88', item: '233', qty: 2 },
+      { from: 'bk', to: '88', item: '231', qty: 2 },
+      { from: 'bk', to: '88', item: '232', qty: 4 },
+      { from: 'bk', to: '88', item: '1777402417410', qty: 5 },
+      { from: 'bk', to: '88', item: '1778164031421', qty: 3 },
+
+      // 10. Transfer: Sec 31 -> Sec 42
+      { from: '31', to: '42', item: '241', qty: 4 },
+      { from: '31', to: '42', item: '87', qty: 2 },
+
+      // 11. Transfer: Sec 31 -> Sec 35
+      { from: '31', to: '35', item: '241', qty: 4 },
+      { from: '31', to: '35', item: '81', qty: 1 },
+      { from: '31', to: '35', item: '87', qty: 1 },
+
+      // 12. Transfer: Sec 31 -> Sec 88
+      { from: '31', to: '88', item: '212', qty: 1 },
+
+      // 13. Transfer: Sec 35 -> Sec 31
+      { from: '35', to: '31', item: '208', qty: 1 },
+      { from: '35', to: '31', item: '243', qty: 4 },
+      { from: '35', to: '31', item: '95', qty: 1 },
+      { from: '35', to: '31', item: '87', qty: 1 },
+
+      // 14. Transfer: Sec 88 -> Sec 31
+      { from: '88', to: '31', item: '217', qty: 2 },
+      { from: '88', to: '31', item: '213', qty: 2 },
+      { from: '88', to: '31', item: '243', qty: 2 },
+      { from: '88', to: '31', item: '95', qty: 1 },
+
+      // 15. Transfer: Sec 42 -> Sec 31
+      { from: '42', to: '31', item: '248', qty: 4 },
+      { from: '42', to: '31', item: '84', qty: 1 },
+      { from: '42', to: '31', item: '79', qty: 1 },
+      { from: '42', to: '31', item: '170', qty: 1 },
+    ];
+
+    // Store memory of daily records we load and update
+    const dailyRecordsCache: Record<string, any> = {};
+
+    let index = 0;
+    for (const tf of transfers) {
+      index++;
+      const itemName = itemMap.get(tf.item) || 'Unknown Item';
+      const transferId = `tf_20260602_${tf.from}_${tf.to}_${tf.item}_${index}`;
+      const transferDoc = {
+        id: transferId,
+        fromOutletId: tf.from,
+        toOutletId: tf.to,
+        itemId: tf.item,
+        itemName: itemName,
+        quantity: tf.qty,
+        status: 'accepted',
+        date: '2026-06-02',
+        createdAt: new Date('2026-06-02T12:00:00Z').toISOString()
+      };
+
+      // Write transfer doc
+      await setDoc(doc(db, 'transfers', transferId), transferDoc, { merge: true });
+
+      // Update receiver daily record ('received')
+      const receiverKey = `2026-06-02_${tf.to}`;
+      if (!dailyRecordsCache[receiverKey]) {
+        const recSnapshot = await getDoc(doc(db, 'daily_records', receiverKey));
+        if (recSnapshot.exists()) {
+          dailyRecordsCache[receiverKey] = recSnapshot.data();
+        } else {
+          dailyRecordsCache[receiverKey] = {
+            date: '2026-06-02',
+            outletId: tf.to,
+            records: {}
+          };
+        }
+      }
+
+      const recsObj = dailyRecordsCache[receiverKey].records;
+      if (!recsObj[tf.item]) {
+        recsObj[tf.item] = {
+          opening: 0, received: 0, sold: 0, returned: 0, transf_out: 0, testing: 0, closing: 0, calculationMode: 'sold'
+        };
+      }
+      recsObj[tf.item].received = Number(recsObj[tf.item].received || 0) + tf.qty;
+
+      // Recalculate closing
+      const o = recsObj[tf.item];
+      o.closing = Number(o.opening || 0) + Number(o.received || 0) - Number(o.sold || 0) - Number(o.testing || 0) - Number(o.returned || 0) - Number(o.transf_out || 0);
+
+      // Update sender daily record ('transf_out')
+      const senderKey = `2026-06-02_${tf.from}`;
+      if (!dailyRecordsCache[senderKey]) {
+        const sendSnapshot = await getDoc(doc(db, 'daily_records', senderKey));
+        if (sendSnapshot.exists()) {
+          dailyRecordsCache[senderKey] = sendSnapshot.data();
+        } else {
+          dailyRecordsCache[senderKey] = {
+            date: '2026-06-02',
+            outletId: tf.from,
+            records: {}
+          };
+        }
+      }
+
+      const sendRecsObj = dailyRecordsCache[senderKey].records;
+      if (!sendRecsObj[tf.item]) {
+        sendRecsObj[tf.item] = {
+          opening: 0, received: 0, sold: 0, returned: 0, transf_out: 0, testing: 0, closing: 0, calculationMode: 'sold'
+        };
+      }
+      sendRecsObj[tf.item].transf_out = Number(sendRecsObj[tf.item].transf_out || 0) + tf.qty;
+
+      // Recalculate closing
+      const s = sendRecsObj[tf.item];
+      s.closing = Number(s.opening || 0) + Number(s.received || 0) - Number(s.sold || 0) - Number(s.testing || 0) - Number(s.returned || 0) - Number(s.transf_out || 0);
+    }
+
+    // 5. Save all updated daily records cache to Firestore
+    for (const [key, val] of Object.entries(dailyRecordsCache)) {
+      await setDoc(doc(db, 'daily_records', key), val, { merge: true });
+    }
+
+    console.log(`Successfully auto-seeded ${transfers.length} transfers and updated ${Object.keys(dailyRecordsCache).length} daily records for June 2nd, 2026!`);
+  } catch (err) {
+    console.error("Auto seeding of June 2nd data failed:", err);
+  }
+}
 
 async function startServer() {
   const app = express();
   const PORT = 3000;
+
+  try {
+    const ingSnap = await getDocs(collection(db, 'ingredients'));
+    const ingredientsList: any[] = [];
+    ingSnap.forEach(doc => {
+      ingredientsList.push({ id: doc.id, ...doc.data() });
+    });
+
+    const itemSnap = await getDocs(collection(db, 'items'));
+    const itemsList: any[] = [];
+    itemSnap.forEach(doc => {
+      itemsList.push({ id: doc.id, ...doc.data() });
+    });
+
+    fs.writeFileSync(path.join(process.cwd(), 'db_snapshot.json'), JSON.stringify({
+      ingredients: ingredientsList,
+      items: itemsList
+    }, null, 2));
+    console.log("Database snapshot written successfully!");
+    
+    // Auto-seed data on boot!
+    await seedDataOnBoot();
+  } catch (error) {
+    console.error("Failed to write database snapshot:", error);
+  }
 
   // Set limits to handle base64 images from camera capture
   app.use(express.json({ limit: "15mb" }));
@@ -450,7 +735,7 @@ Instructions:
       const activeItems = items || [];
       const catalogInfo = activeItems.map((i: any) => `${i.id}: ${i.name}`).join('\n');
 
-      const deepseekKey = process.env.DEEPSEEK_API_KEY || "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";
+      const deepseekKey = process.env.DEEPSEEK_API_KEY || "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";
 
       const systemInstructionText = `You are the Inventory Extractor for "Broomies" bakery management system.
 Map user-entered text lines to official inventory Catalog IDs and numeric quantities.
@@ -581,6 +866,265 @@ Each element of the JSON array MUST have exactly these fields:
       console.error("Prediction failed, running smart offline moving average predictor:", err);
       const fallbackPreds = fallbackPredictProduction(activeItems, historyContext || []);
       res.json(fallbackPreds);
+    }
+  });
+
+  app.get("/api/seed-live-data-june2", async (req, res) => {
+    try {
+      console.log("Seeding June 2nd transfers and ingredients database changes...");
+
+      // 1. Ensure "2 Pastry Box" (id '1778164053176') is created
+      const customItemId = '1778164053176';
+      await setDoc(doc(db, 'items', customItemId), {
+        id: customItemId,
+        name: '2 Pastry Box',
+        category: 'Others',
+        status: 'active',
+        barcode: 'BR' + customItemId.substring(6)
+      }, { merge: true });
+
+      // 2. Insert ingredients & stock
+      const ingredients = [
+        { id: 'red_cherry', name: 'RED CHERRY', unit: 'kg', currentStock: 6, lowStockThreshold: 1 },
+        { id: 'pineapple_tin', name: 'PINEAPPLE TIN', unit: 'tin', currentStock: 1, lowStockThreshold: 1 },
+        { id: 'nutella_filling', name: 'NUTELLA FILLING', unit: 'kg', currentStock: 1, lowStockThreshold: 1 },
+        { id: 'blueberry_tin', name: 'BLUEBERRY TIN', unit: 'tin', currentStock: 1, lowStockThreshold: 1 },
+        { id: 'butterscotch_nuts', name: 'BUTTERSCOTCH NUTS', unit: 'kg', currentStock: 1, lowStockThreshold: 1 }
+      ];
+
+      for (const ing of ingredients) {
+        await setDoc(doc(db, 'ingredients', ing.id), ing, { merge: true });
+      }
+
+      // 3. Retrieve all items to build ID -> Name map
+      const itemSnap = await getDocs(collection(db, 'items'));
+      const itemMap = new Map<string, string>();
+      itemSnap.forEach(doc => {
+        const d = doc.data();
+        itemMap.set(doc.id, d.name);
+      });
+
+      // Extra custom ones from our grep exploration
+      itemMap.set('1777393257084', 'NUTELLA FILLED DOUGHNUT');
+      itemMap.set('1777399948783', 'CHOCOLATE DOUGHNUT');
+      itemMap.set('1777402417410', 'VANILLA CREAM ROLL');
+      itemMap.set('1778163802051', 'CHOCOLATE CREAM ROLL');
+      itemMap.set('1778164031421', 'CHOCOLATE CUP CAKE ');
+      itemMap.set('1778164043175', 'VANILLA CUP CAKE ');
+      itemMap.set('1778164053176', '2 Pastry Box');
+
+      // 4. Data list of the transfers
+      const transfers = [
+        // 3. Kitchen -> Sec 35
+        { from: 'bk', to: '35', item: '87', qty: 1 },
+        { from: 'bk', to: '35', item: '95', qty: 1 },
+        { from: 'bk', to: '35', item: '182', qty: 1 },
+        { from: 'bk', to: '35', item: '79', qty: 1 },
+        { from: 'bk', to: '35', item: '217', qty: 3 },
+        { from: 'bk', to: '35', item: '224', qty: 2 },
+        { from: 'bk', to: '35', item: '216', qty: 2 },
+        { from: 'bk', to: '35', item: '1777393257084', qty: 1 },
+        { from: 'bk', to: '35', item: '1778164053176', qty: 1 },
+
+        // 4. Kitchen -> Sec 31
+        { from: 'bk', to: '31', item: '170', qty: 1 },
+        { from: 'bk', to: '31', item: '39', qty: 1 },
+
+        // 5. Bass Kitchen -> Sec 31
+        { from: 'bk', to: '31', item: '81', qty: 2 },
+        { from: 'bk', to: '31', item: '87', qty: 1 },
+        { from: 'bk', to: '31', item: '182', qty: 1 },
+        { from: 'bk', to: '31', item: '78', qty: 1 },
+
+        // 6. Cake Kitchen -> Sec 42
+        { from: 'bk', to: '42', item: '79', qty: 1 },
+        { from: 'bk', to: '42', item: '170', qty: 1 },
+        { from: 'bk', to: '42', item: '91', qty: 1 },
+        { from: 'bk', to: '42', item: '85', qty: 4 },
+        { from: 'bk', to: '42', item: '132', qty: 1 },
+        { from: 'bk', to: '42', item: '87', qty: 1 },
+        { from: 'bk', to: '42', item: '83', qty: 1 },
+        { from: 'bk', to: '42', item: '97', qty: 1 },
+        { from: 'bk', to: '42', item: '81', qty: 1 },
+        { from: 'bk', to: '42', item: '89', qty: 1 },
+        { from: 'bk', to: '42', item: '84', qty: 2 },
+        { from: 'bk', to: '42', item: '217', qty: 4 },
+        { from: 'bk', to: '42', item: '213', qty: 2 },
+        { from: 'bk', to: '42', item: '216', qty: 8 },
+        { from: 'bk', to: '42', item: '1777399948783', qty: 4 },
+        { from: 'bk', to: '42', item: '232', qty: 4 },
+
+        // 7. Cake Kitchen -> Sec 31
+        { from: 'bk', to: '31', item: '182', qty: 2 },
+        { from: 'bk', to: '31', item: '97', qty: 2 },
+        { from: 'bk', to: '31', item: '83', qty: 2 },
+        { from: 'bk', to: '31', item: '85', qty: 3 },
+        { from: 'bk', to: '31', item: '87', qty: 2 },
+        { from: 'bk', to: '31', item: '170', qty: 2 },
+        { from: 'bk', to: '31', item: '216', qty: 6 },
+
+        // 8. Cake Kitchen -> Sec 35
+        { from: 'bk', to: '35', item: '91', qty: 2 },
+        { from: 'bk', to: '35', item: '88', qty: 1 },
+        { from: 'bk', to: '35', item: '95', qty: 1 },
+        { from: 'bk', to: '35', item: '87', qty: 1 },
+        { from: 'bk', to: '35', item: '170', qty: 1 },
+        { from: 'bk', to: '35', item: '79', qty: 1 },
+        { from: 'bk', to: '35', item: '182', qty: 1 },
+        { from: 'bk', to: '35', item: '225', qty: 2 },
+        { from: 'bk', to: '35', item: '213', qty: 2 },
+        { from: 'bk', to: '35', item: '216', qty: 2 },
+        { from: 'bk', to: '35', item: '217', qty: 2 },
+        { from: 'bk', to: '35', item: '210', qty: 1 },
+        { from: 'bk', to: '35', item: '1777393257084', qty: 1 },
+
+        // 9. Cake Kitchen -> Sec 88
+        { from: 'bk', to: '88', item: '81', qty: 2 },
+        { from: 'bk', to: '88', item: '95', qty: 1 },
+        { from: 'bk', to: '88', item: '177', qty: 1 },
+        { from: 'bk', to: '88', item: '87', qty: 1 },
+        { from: 'bk', to: '88', item: '83', qty: 1 },
+        { from: 'bk', to: '88', item: '85', qty: 1 },
+        { from: 'bk', to: '88', item: '79', qty: 1 },
+        { from: 'bk', to: '88', item: '97', qty: 1 },
+        { from: 'bk', to: '88', item: '89', qty: 1 },
+        { from: 'bk', to: '88', item: '224', qty: 3 },
+        { from: 'bk', to: '88', item: '216', qty: 6 },
+        { from: 'bk', to: '88', item: '217', qty: 3 },
+        { from: 'bk', to: '88', item: '213', qty: 3 },
+        { from: 'bk', to: '88', item: '216', qty: 2 },
+        { from: 'bk', to: '88', item: '215', qty: 2 },
+        { from: 'bk', to: '88', item: '1777399948783', qty: 2 },
+        { from: 'bk', to: '88', item: '1777393257084', qty: 3 },
+        { from: 'bk', to: '88', item: '233', qty: 2 },
+        { from: 'bk', to: '88', item: '231', qty: 2 },
+        { from: 'bk', to: '88', item: '232', qty: 4 },
+        { from: 'bk', to: '88', item: '1777402417410', qty: 5 },
+        { from: 'bk', to: '88', item: '1778164031421', qty: 3 },
+
+        // 10. Transfer: Sec 31 -> Sec 42
+        { from: '31', to: '42', item: '241', qty: 4 },
+        { from: '31', to: '42', item: '87', qty: 2 },
+
+        // 11. Transfer: Sec 31 -> Sec 35
+        { from: '31', to: '35', item: '241', qty: 4 },
+        { from: '31', to: '35', item: '81', qty: 1 },
+        { from: '31', to: '35', item: '87', qty: 1 },
+
+        // 12. Transfer: Sec 31 -> Sec 88
+        { from: '31', to: '88', item: '212', qty: 1 },
+
+        // 13. Transfer: Sec 35 -> Sec 31
+        { from: '35', to: '31', item: '208', qty: 1 },
+        { from: '35', to: '31', item: '243', qty: 4 },
+        { from: '35', to: '31', item: '95', qty: 1 },
+        { from: '35', to: '31', item: '87', qty: 1 },
+
+        // 14. Transfer: Sec 88 -> Sec 31
+        { from: '88', to: '31', item: '217', qty: 2 },
+        { from: '88', to: '31', item: '213', qty: 2 },
+        { from: '88', to: '31', item: '243', qty: 2 },
+        { from: '88', to: '31', item: '95', qty: 1 },
+
+        // 15. Transfer: Sec 42 -> Sec 31
+        { from: '42', to: '31', item: '248', qty: 4 },
+        { from: '42', to: '31', item: '84', qty: 1 },
+        { from: '42', to: '31', item: '79', qty: 1 },
+        { from: '42', to: '31', item: '170', qty: 1 },
+      ];
+
+      // Store memory of daily records we load and update
+      const dailyRecordsCache: Record<string, any> = {};
+
+      let index = 0;
+      for (const tf of transfers) {
+        index++;
+        const itemName = itemMap.get(tf.item) || 'Unknown Item';
+        const transferId = `tf_20260602_${tf.from}_${tf.to}_${tf.item}_${index}`;
+        const transferDoc = {
+          id: transferId,
+          fromOutletId: tf.from,
+          toOutletId: tf.to,
+          itemId: tf.item,
+          itemName: itemName,
+          quantity: tf.qty,
+          status: 'accepted',
+          date: '2026-06-02',
+          createdAt: new Date('2026-06-02T12:00:00Z').toISOString()
+        };
+
+        // Write transfer
+        await setDoc(doc(db, 'transfers', transferId), transferDoc, { merge: true });
+
+        // Update receiver daily record ('received')
+        const receiverKey = `2026-06-02_${tf.to}`;
+        if (!dailyRecordsCache[receiverKey]) {
+          const recSnapshot = await getDoc(doc(db, 'daily_records', receiverKey));
+          if (recSnapshot.exists()) {
+            dailyRecordsCache[receiverKey] = recSnapshot.data();
+          } else {
+            dailyRecordsCache[receiverKey] = {
+              date: '2026-06-02',
+              outletId: tf.to,
+              records: {}
+            };
+          }
+        }
+
+        const recsObj = dailyRecordsCache[receiverKey].records;
+        if (!recsObj[tf.item]) {
+          recsObj[tf.item] = {
+            opening: 0, received: 0, sold: 0, returned: 0, transf_out: 0, testing: 0, closing: 0, calculationMode: 'sold'
+          };
+        }
+        recsObj[tf.item].received = Number(recsObj[tf.item].received || 0) + tf.qty;
+
+        // Recalculate closing
+        const o = recsObj[tf.item];
+        o.closing = Number(o.opening || 0) + Number(o.received || 0) - Number(o.sold || 0) - Number(o.testing || 0) - Number(o.returned || 0) - Number(o.transf_out || 0);
+
+        // Update sender daily record ('transf_out')
+        const senderKey = `2026-06-02_${tf.from}`;
+        if (!dailyRecordsCache[senderKey]) {
+          const sendSnapshot = await getDoc(doc(db, 'daily_records', senderKey));
+          if (sendSnapshot.exists()) {
+            dailyRecordsCache[senderKey] = sendSnapshot.data();
+          } else {
+            dailyRecordsCache[senderKey] = {
+              date: '2026-06-02',
+              outletId: tf.from,
+              records: {}
+            };
+          }
+        }
+
+        const sendRecsObj = dailyRecordsCache[senderKey].records;
+        if (!sendRecsObj[tf.item]) {
+          sendRecsObj[tf.item] = {
+            opening: 0, received: 0, sold: 0, returned: 0, transf_out: 0, testing: 0, closing: 0, calculationMode: 'sold'
+          };
+        }
+        sendRecsObj[tf.item].transf_out = Number(sendRecsObj[tf.item].transf_out || 0) + tf.qty;
+
+        // Recalculate closing
+        const s = sendRecsObj[tf.item];
+        s.closing = Number(s.opening || 0) + Number(s.received || 0) - Number(s.sold || 0) - Number(s.testing || 0) - Number(s.returned || 0) - Number(s.transf_out || 0);
+      }
+
+      // 5. Save all updated daily records cache to Firestore
+      for (const [key, val] of Object.entries(dailyRecordsCache)) {
+        await setDoc(doc(db, 'daily_records', key), val, { merge: true });
+      }
+
+      res.json({
+        success: true,
+        message: 'Successfully seeded June 2nd transfers and ingredients stock updates into Firestore!',
+        transfersProcessed: transfers.length,
+        dailyRecordsUpdated: Object.keys(dailyRecordsCache)
+      });
+    } catch (err: any) {
+      console.error("Failed to seed June 2nd data:", err);
+      res.status(500).json({ error: err.message });
     }
   });
 
