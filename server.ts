@@ -260,7 +260,173 @@ async function seedDataOnBoot() {
       await setDoc(doc(db, 'daily_records', key), val, { merge: true });
     }
 
-    console.log(`Successfully auto-seeded ${transfers.length} transfers and updated ${Object.keys(dailyRecordsCache).length} daily records for June 2nd, 2026!`);
+    // 5b. Overwrite with explicit physical ledger entries from the user for 2nd June
+    const sectorTables: Record<string, Array<{ name: string, opening: number, sold: number, receive: number, waste: number, closing: number }>> = {
+      '31': [
+        { "name": "Chocolate Truffle 1/2 Kg", "opening": 3, "sold": 1, "receive": 3, "waste": 0, "closing": 5 },
+        { "name": "Chocolate Truffle 1 Kg", "opening": 1, "sold": 0, "receive": 0, "waste": 1, "closing": 0 },
+        { "name": "Pineapple 1/2 Kg", "opening": 4, "sold": 5, "receive": 1, "waste": 0, "closing": 0 },
+        { "name": "Butterscotch 1/2 Kg", "opening": 0, "sold": 2, "receive": 2, "waste": 0, "closing": 0 },
+        { "name": "Vanilla 1/2 Kg", "opening": 0, "sold": 2, "receive": 2, "waste": 0, "closing": 0 },
+        { "name": "Fresh Fruit 1/2 Kg", "opening": 2, "sold": 1, "receive": 0, "waste": 1, "closing": 0 },
+        { "name": "Blueberry 1/2 Kg", "opening": 2, "sold": 1, "receive": 0, "waste": 0, "closing": 1 },
+        { "name": "Tiramisu 1/2 Kg", "opening": 0, "sold": 0, "receive": 3, "waste": 0, "closing": 3 },
+        { "name": "Black Forest 1/2 Kg", "opening": 1, "sold": 0, "receive": 0, "waste": 1, "closing": 0 },
+        { "name": "Red Velvet 1/2 Kg", "opening": 0, "sold": 1, "receive": 2, "waste": 0, "closing": 1 },
+        { "name": "Fresh Mango/Strawberry 1/2 Kg", "opening": 1, "sold": 0, "receive": 0, "waste": 0, "closing": 1 },
+        { "name": "Ferro Rocher 1/2 Kg", "opening": 0, "sold": 2, "receive": 3, "waste": 0, "closing": 1 },
+        { "name": "Classic Pineapple Pastry", "opening": 6, "sold": 2, "receive": 0, "waste": 0, "closing": 4 },
+        { "name": "Black Forest Pastry", "opening": 6, "sold": 1, "receive": 0, "waste": 0, "closing": 5 },
+        { "name": "Chocolate Truffle Pastry", "opening": 2, "sold": 5, "receive": 3, "waste": 0, "closing": 0 },
+        { "name": "Red Velvet Pastry", "opening": 2, "sold": 0, "receive": 0, "waste": 0, "closing": 2 },
+        { "name": "Blueberry Pastry", "opening": 5, "sold": 3, "receive": 0, "waste": 0, "closing": 2 },
+        { "name": "Rainbow Pastry", "opening": 5, "sold": 1, "receive": 0, "waste": 0, "closing": 4 },
+        { "name": "Blueberry Cheese Pastry", "opening": 5, "sold": 2, "receive": 0, "waste": 0, "closing": 3 },
+        { "name": "Nutella Cheese Pastry", "opening": 2, "sold": 1, "receive": 0, "waste": 0, "closing": 1 },
+        { "name": "Aloo Patty", "opening": 0, "sold": 16, "receive": 16, "waste": 0, "closing": 0 },
+        { "name": "Paneer Patty", "opening": 0, "sold": 4, "receive": 4, "waste": 0, "closing": 0 },
+        { "name": "Vada Pav", "opening": 0, "sold": 0, "receive": 3, "waste": 0, "closing": 3 },
+        { "name": "Mushroom Puff", "opening": 0, "sold": 0, "receive": 7, "waste": 0, "closing": 7 },
+        { "name": "Hot Dog", "opening": 0, "sold": 1, "receive": 11, "waste": 0, "closing": 10 },
+        { "name": "Paneer Kulcha", "opening": 0, "sold": 0, "receive": 8, "waste": 0, "closing": 8 }
+      ],
+      '88': [
+        { "name": "Chocolate Truffle 1/2 Kg", "opening": 0, "sold": 0, "receive": 1, "waste": 0, "closing": 1 },
+        { "name": "Pineapple 1/2 Kg", "opening": 0, "sold": 1, "receive": 2, "waste": 0, "closing": 1 },
+        { "name": "Butterscotch 1/2 Kg", "opening": 0, "sold": 0, "receive": 1, "waste": 0, "closing": 1 },
+        { "name": "Vanilla 1/2 Kg", "opening": 0, "sold": 0, "receive": 1, "waste": 0, "closing": 1 },
+        { "name": "Fresh Fruit 1/2 Kg", "opening": 0, "sold": 0, "receive": 1, "waste": 0, "closing": 1 },
+        { "name": "Blueberry 1/2 Kg", "opening": 0, "sold": 1, "receive": 2, "waste": 0, "closing": 1 },
+        { "name": "Black Forest 1/2 Kg", "opening": 0, "sold": 0, "receive": 1, "waste": 0, "closing": 1 },
+        { "name": "Red Velvet 1/2 Kg", "opening": 1, "sold": 0, "receive": 0, "waste": 0, "closing": 1 },
+        { "name": "Classic Pineapple Pastry", "opening": 3, "sold": 1, "receive": 0, "waste": 0, "closing": 2 },
+        { "name": "Black Forest Pastry", "opening": 2, "sold": 0, "receive": 0, "waste": 0, "closing": 2 },
+        { "name": "Chocolate Truffle Pastry", "opening": 3, "sold": 2, "receive": 6, "waste": 0, "closing": 7 },
+        { "name": "Rainbow Pastry", "opening": 1, "sold": 2, "receive": 3, "waste": 0, "closing": 2 },
+        { "name": "Blueberry Cheese Pastry", "opening": 1, "sold": 1, "receive": 2, "waste": 0, "closing": 2 },
+        { "name": "Nutella Cheese Pastry", "opening": 2, "sold": 2, "receive": 0, "waste": 0, "closing": 0 },
+        { "name": "Aloo Patty", "opening": 0, "sold": 1, "receive": 4, "waste": 0, "closing": 3 },
+        { "name": "Paneer Patty", "opening": 2, "sold": 0, "receive": 0, "waste": 1, "closing": 1 },
+        { "name": "Mushroom Puff", "opening": 2, "sold": 0, "receive": 0, "waste": 0, "closing": 2 },
+        { "name": "Hot Dog", "opening": 1, "sold": 0, "receive": 0, "waste": 0, "closing": 1 }
+      ],
+      '42': [
+        { "name": "Chocolate Truffle 1/2 Kg", "opening": 1, "sold": 2, "receive": 3, "waste": 0, "closing": 2 },
+        { "name": "Chocolate Truffle 1 Kg", "opening": 0, "sold": 0, "receive": 1, "waste": 0, "closing": 1 },
+        { "name": "Pineapple 1/2 Kg", "opening": 0, "sold": 3, "receive": 3, "waste": 0, "closing": 0 },
+        { "name": "Butterscotch 1/2 Kg", "opening": 0, "sold": 1, "receive": 1, "waste": 0, "closing": 0 },
+        { "name": "Vanilla 1/2 Kg", "opening": 0, "sold": 1, "receive": 1, "waste": 0, "closing": 0 },
+        { "name": "Fresh Fruit 1/2 Kg", "opening": 0, "sold": 2, "receive": 2, "waste": 0, "closing": 0 },
+        { "name": "Blueberry 1/2 Kg", "opening": 0, "sold": 1, "receive": 1, "waste": 0, "closing": 0 },
+        { "name": "Tiramisu 1/2 Kg", "opening": 1, "sold": 0, "receive": 0, "waste": 1, "closing": 0 },
+        { "name": "Black Forest 1/2 Kg", "opening": 1, "sold": 1, "receive": 1, "waste": 0, "closing": 1 },
+        { "name": "Red Velvet 1/2 Kg", "opening": 1, "sold": 0, "receive": 0, "waste": 1, "closing": 0 },
+        { "name": "Blueberry Cheese Cake 1/2 Kg", "opening": 0, "sold": 0, "receive": 1, "waste": 0, "closing": 1 },
+        { "name": "Fresh Mango/Strawberry 1/2 Kg", "opening": 1, "sold": 2, "receive": 1, "waste": 0, "closing": 0 },
+        { "name": "Ferro Rocher 1/2 Kg", "opening": 1, "sold": 0, "receive": 0, "waste": 1, "closing": 0 },
+        { "name": "Classic Pineapple Pastry", "opening": 3, "sold": 3, "receive": 1, "waste": 0, "closing": 1 },
+        { "name": "Black Forest Pastry", "opening": 1, "sold": 2, "receive": 5, "waste": 0, "closing": 4 },
+        { "name": "Chocolate Truffle Pastry", "opening": 6, "sold": 6, "receive": 1, "waste": 0, "closing": 1 },
+        { "name": "Red Velvet Pastry", "opening": 3, "sold": 0, "receive": 5, "waste": 0, "closing": 8 },
+        { "name": "Blueberry Pastry", "opening": 2, "sold": 2, "receive": 3, "waste": 0, "closing": 3 },
+        { "name": "Rainbow Pastry", "opening": 2, "sold": 1, "receive": 0, "waste": 1, "closing": 0 },
+        { "name": "Blueberry Cheese Pastry", "opening": 2, "sold": 2, "receive": 3, "waste": 0, "closing": 3 },
+        { "name": "Nutella Cheese Pastry", "opening": 0, "sold": 0, "receive": 3, "waste": 0, "closing": 3 },
+        { "name": "Kunafa Pastry", "opening": 0, "sold": 0, "receive": 2, "waste": 0, "closing": 2 },
+        { "name": "Aloo Patty", "opening": 1, "sold": 10, "receive": 11, "waste": 0, "closing": 2 },
+        { "name": "Paneer Patty", "opening": 1, "sold": 4, "receive": 4, "waste": 0, "closing": 1 },
+        { "name": "Vada Pav", "opening": 3, "sold": 0, "receive": 0, "waste": 0, "closing": 3 },
+        { "name": "Mushroom Puff", "opening": 0, "sold": 3, "receive": 4, "waste": 0, "closing": 1 },
+        { "name": "Hot Dog", "opening": 2, "sold": 0, "receive": 0, "waste": 0, "closing": 2 },
+        { "name": "Paneer Kulcha", "opening": 7, "sold": 1, "receive": 0, "waste": 4, "closing": 2 }
+      ],
+      '35': [
+        { "name": "Chocolate Truffle 1/2 Kg", "opening": 2, "sold": 1, "receive": 0, "waste": 0, "closing": 1 },
+        { "name": "Pineapple 1/2 Kg", "opening": 1, "sold": 1, "receive": 1, "waste": 0, "closing": 1 },
+        { "name": "Butterscotch 1/2 Kg", "opening": 1, "sold": 2, "receive": 1, "waste": 0, "closing": 0 },
+        { "name": "Vanilla 1/2 Kg", "opening": 1, "sold": 0, "receive": 0, "waste": 0, "closing": 1 },
+        { "name": "Blueberry 1/2 Kg", "opening": 1, "sold": 1, "receive": 1, "waste": 0, "closing": 1 },
+        { "name": "Tiramisu 1/2 Kg", "opening": 0, "sold": 0, "receive": 1, "waste": 0, "closing": 1 },
+        { "name": "Black Forest 1/2 Kg", "opening": 0, "sold": 0, "receive": 1, "waste": 0, "closing": 1 },
+        { "name": "Red Velvet 1/2 Kg", "opening": 1, "sold": 0, "receive": 0, "waste": 0, "closing": 1 },
+        { "name": "Blueberry Cheese Cake 1/2 Kg", "opening": 0, "sold": 1, "receive": 1, "waste": 0, "closing": 0 },
+        { "name": "Fresh Mango/Strawberry 1/2 Kg", "opening": 0, "sold": 1, "receive": 1, "waste": 0, "closing": 0 },
+        { "name": "Classic Pineapple Pastry", "opening": 3, "sold": 5, "receive": 3, "waste": 0, "closing": 1 },
+        { "name": "Black Forest Pastry", "opening": 4, "sold": 0, "receive": 0, "waste": 1, "closing": 3 },
+        { "name": "Chocolate Truffle Pastry", "opening": 4, "sold": 7, "receive": 5, "waste": 0, "closing": 2 },
+        { "name": "Red Velvet Pastry", "opening": 3, "sold": 0, "receive": 0, "waste": 0, "closing": 3 },
+        { "name": "Blueberry Pastry", "opening": 3, "sold": 3, "receive": 0, "waste": 0, "closing": 0 },
+        { "name": "Rainbow Pastry", "opening": 2, "sold": 1, "receive": 1, "waste": 0, "closing": 2 },
+        { "name": "Blueberry Cheese Pastry", "opening": 3, "sold": 1, "receive": 1, "waste": 0, "closing": 3 },
+        { "name": "Nutella Cheese Pastry", "opening": 2, "sold": 1, "receive": 1, "waste": 0, "closing": 2 },
+        { "name": "Aloo Patty", "opening": 1, "sold": 9, "receive": 8, "waste": 0, "closing": 0 },
+        { "name": "Paneer Patty", "opening": 4, "sold": 4, "receive": 0, "waste": 0, "closing": 0 },
+        { "name": "Vada Pav", "opening": 6, "sold": 0, "receive": 0, "waste": 0, "closing": 6 },
+        { "name": "Mushroom Puff", "opening": 3, "sold": 2, "receive": 4, "waste": 0, "closing": 5 },
+        { "name": "Hot Dog", "opening": 5, "sold": 1, "receive": 0, "waste": 2, "closing": 2 },
+        { "name": "Paneer Kulcha", "opening": 5, "sold": 0, "receive": 0, "waste": 2, "closing": 3 }
+      ]
+    };
+
+    const itemNameToIdMap: Record<string, string> = {
+      "Chocolate Truffle 1/2 Kg": "85",
+      "Chocolate Truffle 1 Kg": "84",
+      "Pineapple 1/2 Kg": "87",
+      "Butterscotch 1/2 Kg": "83",
+      "Vanilla 1/2 Kg": "97",
+      "Fresh Fruit 1/2 Kg": "89",
+      "Blueberry 1/2 Kg": "81",
+      "Tiramisu 1/2 Kg": "182",
+      "Black Forest 1/2 Kg": "79",
+      "Red Velvet 1/2 Kg": "95",
+      "Blueberry Cheese Cake 1/2 Kg": "43",
+      "Fresh Mango/Strawberry 1/2 Kg": "91",
+      "Ferro Rocher 1/2 Kg": "170",
+      "Classic Pineapple Pastry": "217",
+      "Black Forest Pastry": "213",
+      "Chocolate Truffle Pastry": "216",
+      "Red Velvet Pastry": "225",
+      "Blueberry Pastry": "214",
+      "Rainbow Pastry": "224",
+      "Blueberry Cheese Pastry": "215",
+      "Nutella Cheese Pastry": "223",
+      "Kunafa Pastry": "219",
+      "Aloo Patty": "208",
+      "Paneer Patty": "243",
+      "Vada Pav": "251",
+      "Mushroom Puff": "241",
+      "Hot Dog": "239",
+      "Paneer Kulcha": "248"
+    };
+
+    for (const [outletId, list] of Object.entries(sectorTables)) {
+      const recordKey = `2026-06-02_${outletId}`;
+      const recSnapshot = await getDoc(doc(db, 'daily_records', recordKey));
+      let currentRecord = recSnapshot.exists() ? recSnapshot.data() : { date: '2026-06-02', outletId, records: {} };
+      if (!currentRecord.records) {
+        currentRecord.records = {};
+      }
+
+      for (const row of list) {
+        const itemId = itemNameToIdMap[row.name];
+        if (itemId) {
+          currentRecord.records[itemId] = {
+            opening: Number(row.opening),
+            received: Number(row.receive),
+            sold: Number(row.sold),
+            testing: Number(row.waste),
+            returned: 0,
+            transf_out: 0,
+            closing: Number(row.closing),
+            calculationMode: 'sold'
+          };
+        }
+      }
+
+      await setDoc(doc(db, 'daily_records', recordKey), currentRecord, { merge: true });
+    }
+
+    console.log(`Successfully auto-seeded ${transfers.length} transfers and updated ${Object.keys(dailyRecordsCache).length} daily records, and injected verified final physical entries for June 2nd, 2026!`);
   } catch (err) {
     console.error("Auto seeding of June 2nd data failed:", err);
   }

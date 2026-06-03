@@ -70,6 +70,7 @@ import autoTable from 'jspdf-autotable';
 import { format, subDays, startOfDay, isValid, eachDayOfInterval } from 'date-fns';
 import { INITIAL_ITEMS, OUTLETS, Item, PRIORITY_ITEM_NAMES } from './constants';
 import { db, auth, OperationType, handleFirestoreError } from './lib/firebase';
+import { LedgerSheetComponent } from './components/LedgerSheetComponent';
 import { 
   collection, 
   doc, 
@@ -161,12 +162,13 @@ interface Recipe {
 }
 
 type UserRole = 'admin' | 'outlet';
-type View = 'dashboard' | 'items' | 'history' | 'reports' | 'management' | 'lifecycle' | 'production' | 'prediction' | 'distribution' | 'recipes' | 'globalClosing' | 'requirements' | 'smartTransfer';
+type View = 'dashboard' | 'items' | 'history' | 'reports' | 'management' | 'lifecycle' | 'production' | 'prediction' | 'distribution' | 'recipes' | 'globalClosing' | 'requirements' | 'smartTransfer' | 'ledgerSheet';
 
 // --- Components ---
 const Sidebar = React.memo(({ view, setView, selectedOutletId, setSelectedOutletId, onLogout, userRole, isOpen, setIsOpen, onExport }: any) => {
   const menuItems = [
     { id: 'dashboard', label: 'Outlet Console', icon: <LayoutDashboard size={16} />, roles: ['admin', 'outlet', 'manager'] },
+    { id: 'ledgerSheet', label: 'Outlets Ledger & Returns', icon: <FileSpreadsheet size={16} />, roles: ['admin', 'outlet', 'manager', 'production'] },
     { id: 'smartTransfer', label: 'Smart Scan Transfer', icon: <Scan size={16} />, roles: ['admin'] },
     { id: 'requirements', label: 'Requirements', icon: <FileSpreadsheet size={16} />, roles: ['admin', 'outlet', 'manager'] },
     { id: 'production', label: 'Kitchen Console', icon: <ChefHat size={16} />, roles: ['admin', 'production'] },
@@ -4944,6 +4946,19 @@ export default function App() {
         )}
         {view === 'recipes' && (
           <RecipesComponent items={items} ingredients={ingredients} recipes={recipes} setIsSidebarOpen={setIsSidebarOpen} />
+        )}
+        {view === 'ledgerSheet' && (
+          <LedgerSheetComponent
+            items={items}
+            records={records}
+            setRecords={setRecords}
+            currentDate={currentDate}
+            setCurrentDate={setCurrentDate}
+            getPreviousClosing={getPreviousClosing}
+            calculateSold={calculateSold}
+            calculateClosing={calculateClosing}
+            setIsSidebarOpen={setIsSidebarOpen}
+          />
         )}
         {view === 'distribution' && (
           <DistributionComponent 
